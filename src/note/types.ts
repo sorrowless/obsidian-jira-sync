@@ -1,0 +1,42 @@
+import type { TaskStatus } from '../sync/status';
+
+export interface ParsedTaskNode {
+  /** 0-based line index of the checklist item in the source note. */
+  lineIndex: number;
+  /** Inclusive last line index of this task block (descriptions + descendants). */
+  endLineIndex: number;
+  /** Leading whitespace before the list marker. */
+  indent: string;
+  /** List marker as written (`-`, `*`, `1.`). */
+  listMarker: string;
+  /** Character inside the brackets (` `, `x`, `X`, `/`, …). */
+  checkboxChar: string;
+  /**
+   * Legacy done flag: true for x/X, false for space, null for other chars.
+   * Prefer `status` for sync logic.
+   */
+  done: boolean | null;
+  /**
+   * Synced workflow status: todo `[ ]`, in_progress `[/]`, done `[x]`/`[X]`.
+   * `null` when the checkbox is outside the sync contract (e.g. `[-]`).
+   */
+  status: TaskStatus | null;
+  /** Task title (link text when linked, otherwise body without date tokens). */
+  title: string;
+  /** Jira issue key when the body is a browse link to this instance. */
+  issueKey: string | null;
+  /** ISO UTC start time, or null when unset. */
+  startDate: string | null;
+  /** ISO UTC due time, or null when unset. Synced to Jira `duedate`. */
+  dueDate: string | null;
+  /** Indented non-checkbox bullets under this task (description). */
+  descriptionLines: string[];
+  /** Source line indices for descriptionLines (parallel array). */
+  descriptionLineIndices: number[];
+  /** Nested checklist children. */
+  children: ParsedTaskNode[];
+}
+
+export interface ParseNoteOptions {
+  jiraBaseUrl: string;
+}

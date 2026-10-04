@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-jira-sync",
+	"name": "Jira Sync",
+	"version": "1.0.0",
+	"minAppVersion": "1.5.0",
+	"description": "Bidirectional sync between Obsidian checklist tasks and Jira boards.",
+	"author": "Stan Bogatkin",
+	"authorUrl": "https://github.com/sorrowless",
+	"isDesktopOnly": false
+}
