@@ -51,6 +51,8 @@ Stores connection and behaviour configuration:
 | `jiraApiToken` | API token (Cloud) or Personal Access Token (self-hosted) |
 | `mappings` | Array of `{ notePath, boardId, boardName?, labels[], recencyValue, recencyUnit, recencyField }` — `boardName` is display-only; `labels` empty means all board issues (OR-filter when set); recency `0` = no time window, else `updated|created >= -Nd|-NM` |
 | `startDateFieldId` | Optional custom field id for Start date (e.g. `customfield_10015`) |
+| `actualEndFieldId` | Optional Actual end field; wins for Obsidian due; used with time tracking to derive start |
+| `targetEndFieldId` | Target end / due field (default `duedate`); Obsidian due writes here |
 | `conflictPolicy` | `prefer-obsidian` (default) or `prefer-jira` |
 | `syncOnStartup` | Boolean |
 | `syncIntervalEnabled` | Boolean |

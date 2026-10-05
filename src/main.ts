@@ -170,11 +170,17 @@ export default class JiraSyncPlugin extends Plugin {
   async findStartDateField(): Promise<
     { ok: true; fieldId: string; name: string } | { ok: false; message: string }
   > {
+    return this.findJiraFieldByName('Start date');
+  }
+
+  async findJiraFieldByName(
+    name: string,
+  ): Promise<{ ok: true; fieldId: string; name: string } | { ok: false; message: string }> {
     try {
       const client = this.createJiraClient();
-      const field = await client.findStartDateField();
+      const field = await client.findFieldByName(name);
       if (!field) {
-        return { ok: false, message: 'No field named “Start date” was found.' };
+        return { ok: false, message: `No field named “${name}” was found.` };
       }
       return { ok: true, fieldId: field.id, name: field.name };
     } catch (error) {
@@ -250,6 +256,8 @@ export default class JiraSyncPlugin extends Plugin {
           conflictPolicy: this.settings.conflictPolicy,
           client,
           startDateFieldId: this.settings.startDateFieldId,
+          actualEndFieldId: this.settings.actualEndFieldId,
+          targetEndFieldId: this.settings.targetEndFieldId,
           dryRun,
           readNote: async (path) => {
             const file = resolveMarkdownFile(this.app, path);
@@ -361,6 +369,12 @@ function normalizeSettings(saved: Partial<PluginSettings>): PluginSettings {
     dryRunDefault: Boolean(saved.dryRunDefault),
     startDateFieldId:
       typeof saved.startDateFieldId === 'string' ? saved.startDateFieldId.trim() : '',
+    actualEndFieldId:
+      typeof saved.actualEndFieldId === 'string' ? saved.actualEndFieldId.trim() : '',
+    targetEndFieldId:
+      typeof saved.targetEndFieldId === 'string' && saved.targetEndFieldId.trim()
+        ? saved.targetEndFieldId.trim()
+        : 'duedate',
   };
 }
 

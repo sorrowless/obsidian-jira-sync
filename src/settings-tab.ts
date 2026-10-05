@@ -42,7 +42,7 @@ export class JiraSyncSettingTab extends PluginSettingTab {
     });
 
     this.renderConnectionSection(containerEl);
-    this.renderStartDateSection(containerEl);
+    this.renderDateFieldsSection(containerEl);
     this.renderMappingsSection(containerEl);
     this.renderConflictSection(containerEl);
     this.renderTriggersSection(containerEl);
@@ -135,8 +135,12 @@ export class JiraSyncSettingTab extends PluginSettingTab {
       );
   }
 
-  private renderStartDateSection(containerEl: HTMLElement): void {
-    containerEl.createEl('h3', { text: 'Start date field' });
+  private renderDateFieldsSection(containerEl: HTMLElement): void {
+    containerEl.createEl('h3', { text: 'Date fields' });
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text: 'Due (📅): Actual end wins when set, otherwise Target end. Obsidian due date writes back to Target end only. Start (🛫): Start field, or Actual end − time tracking when Start is empty.',
+    });
 
     new Setting(containerEl)
       .setName('Start date field id')
@@ -149,29 +153,74 @@ export class JiraSyncSettingTab extends PluginSettingTab {
             this.plugin.settings.startDateFieldId = value.trim();
             await this.plugin.saveSettings();
           }),
+      )
+      .addButton((button) =>
+        button.setButtonText('Find').onClick(async () => {
+          await this.findAndStoreField('Start date', (id) => {
+            this.plugin.settings.startDateFieldId = id;
+          });
+        }),
       );
 
     new Setting(containerEl)
-      .setName('Find Start date field')
-      .setDesc('Search Jira fields for a field named “Start date” and store its id')
+      .setName('Actual end field id')
+      .setDesc(
+        'When filled, this wins for Obsidian 📅. Also used with time tracking to derive 🛫 when Start is empty. Leave empty to ignore.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('customfield_…')
+          .setValue(this.plugin.settings.actualEndFieldId)
+          .onChange(async (value) => {
+            this.plugin.settings.actualEndFieldId = value.trim();
+            await this.plugin.saveSettings();
+          }),
+      )
       .addButton((button) =>
-        button.setButtonText('Find field').onClick(async () => {
-          button.setDisabled(true);
-          try {
-            const result = await this.plugin.findStartDateField();
-            if (result.ok) {
-              this.plugin.settings.startDateFieldId = result.fieldId;
-              await this.plugin.saveSettings();
-              new Notice(`Jira Sync: using ${result.name} (${result.fieldId}).`);
-              this.display();
-            } else {
-              new Notice(`Jira Sync: ${result.message}`);
-            }
-          } finally {
-            button.setDisabled(false);
-          }
+        button.setButtonText('Find').onClick(async () => {
+          await this.findAndStoreField('Actual end', (id) => {
+            this.plugin.settings.actualEndFieldId = id;
+          });
         }),
       );
+
+    new Setting(containerEl)
+      .setName('Target end field id')
+      .setDesc(
+        'Used when Actual end is empty, and when Obsidian updates 📅. Default is the standard Due date field (`duedate`).',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('duedate')
+          .setValue(this.plugin.settings.targetEndFieldId || 'duedate')
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            this.plugin.settings.targetEndFieldId = trimmed || 'duedate';
+            await this.plugin.saveSettings();
+          }),
+      )
+      .addButton((button) =>
+        button.setButtonText('Find').onClick(async () => {
+          await this.findAndStoreField('Target end', (id) => {
+            this.plugin.settings.targetEndFieldId = id;
+          });
+        }),
+      );
+  }
+
+  private async findAndStoreField(
+    fieldName: string,
+    assign: (fieldId: string) => void,
+  ): Promise<void> {
+    const result = await this.plugin.findJiraFieldByName(fieldName);
+    if (result.ok) {
+      assign(result.fieldId);
+      await this.plugin.saveSettings();
+      new Notice(`Jira Sync: using ${result.name} (${result.fieldId}).`);
+      this.display();
+    } else {
+      new Notice(`Jira Sync: ${result.message}`);
+    }
   }
 
   private renderMappingsSection(containerEl: HTMLElement): void {

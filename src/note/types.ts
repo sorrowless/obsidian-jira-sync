@@ -27,7 +27,7 @@ export interface ParsedTaskNode {
   issueKey: string | null;
   /** ISO UTC start time, or null when unset. */
   startDate: string | null;
-  /** ISO UTC due time, or null when unset. Synced to Jira `duedate`. */
+  /** ISO UTC due time, or null when unset. From Actual/Target end; pushes to Target end. */
   dueDate: string | null;
   /** Indented non-checkbox bullets under this task (description). */
   descriptionLines: string[];

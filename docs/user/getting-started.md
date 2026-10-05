@@ -22,7 +22,7 @@ This plugin syncs checklist tasks between Obsidian notes and boards on Atlassian
    - Jira base URL (for example `https://your.atlassian.net` or `https://jira.example`)
    - Auth mode (Cloud or Self-hosted PAT)
    - Email (Cloud) and API token / PAT
-4. Optionally look up and set the **Start date** custom field id.
+4. Optionally configure **Date fields** (Start date, Actual end, Target end).
 5. Add a mapping: **Browse note**, then **Browse board** (project/space → board). Optionally add Labels and/or a Recent-only window (last N days/months) when the board is large.
 6. Choose a conflict policy (default: Prefer Obsidian).
 7. Enable the sync triggers you want (startup, interval, file change). Manual sync remains available as a command.

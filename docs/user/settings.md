@@ -13,11 +13,17 @@
 
 A **Test connection** button verifies that the saved URL and credentials can call `/rest/api/2/myself`.
 
-## Start date field
+## Date fields
 
-Jira has no universal Start date field. Enter the custom field id (e.g. `customfield_10015`), or use **Find Start date field** to search fields whose name is “Start date” (case-insensitive).
+| Setting | Purpose |
+| --- | --- |
+| **Start date field id** | Custom field for 🛫. **Find** looks up a field named “Start date”. Empty = do not push start to Jira |
+| **Actual end field id** | When filled on an issue, wins for Obsidian 📅. With time tracking and an empty Start field, start is derived as Actual end − time spent. Never written from Obsidian. **Find** looks up “Actual end” |
+| **Target end field id** | Used when Actual end is empty; Obsidian 📅 writes here. Default `duedate` (Jira Due date). **Find** looks up “Target end” |
 
-If empty, due dates still sync; start markers in notes are not pushed to Jira.
+Due date resolution from Jira: **Actual end** if set, else **Target end**, else no 📅 (time tracking alone never invents a due date).
+
+Start resolution from Jira: Start field if set; otherwise, when Actual end and time tracking (time spent) are both present, start = Actual end − time spent. Sync then writes that value into the Start field and reports **set start date from actual end − time tracking** in the notice/report.
 
 ## Note ↔ board mappings
 

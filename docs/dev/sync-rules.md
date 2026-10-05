@@ -12,7 +12,8 @@ Synced fields:
 - Parent / child nesting (Jira sub-tasks)
 - Jira browse URL in the Obsidian task line
 - Start date (`🛫` ↔ configured custom field)
-- Due date (`📅` ↔ Jira `duedate`)
+- Due date (`📅` ← Actual end or Target end; → Target end only)
+- Start date (`🛫` ↔ Start field; may be derived from Actual end − time tracking)
 
 Not synced in v1:
 
@@ -78,10 +79,10 @@ Rules:
 
 | Marker | Meaning | Jira field |
 | --- | --- | --- |
-| `🛫` | Start | Custom field id from settings (`startDateFieldId`); skipped if unset |
-| `📅` | Due | Standard `duedate` (`YYYY-MM-DD`) |
+| `🛫` | Start | `startDateFieldId` when set; else derived as Actual end − time spent when both exist (then written into Start) |
+| `📅` | Due | Actual end (`actualEndFieldId`) if set, else Target end (`targetEndFieldId`, default `duedate`). Obsidian → Target end only |
 
-Accepted note values: `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` (local time). Due date writes to Jira use the date portion only.
+Accepted note values: `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` (local time). Due/target writes to Jira use the date portion only. Date-only Actual end is treated as end of that local day before subtracting time spent.
 
 ## Done / workflow status
 

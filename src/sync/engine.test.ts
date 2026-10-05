@@ -226,6 +226,9 @@ async function runSync(options: {
   dryRun?: boolean;
   conflictPolicy?: ConflictPolicy;
   labels?: string[];
+  startDateFieldId?: string;
+  actualEndFieldId?: string;
+  targetEndFieldId?: string;
 }): Promise<{
   result: Awaited<ReturnType<typeof syncAllMappings>>;
   written: string;
@@ -248,7 +251,9 @@ async function runSync(options: {
       baseUrl: BASE_URL,
       conflictPolicy: options.conflictPolicy ?? 'prefer-obsidian',
       client: options.mock.client,
-      startDateFieldId: '',
+      startDateFieldId: options.startDateFieldId ?? '',
+      actualEndFieldId: options.actualEndFieldId,
+      targetEndFieldId: options.targetEndFieldId,
       readNote,
       writeNote,
       dryRun: options.dryRun,
@@ -540,5 +545,76 @@ describe('sync engine', () => {
 
     const createdLabels = mock.createIssue.mock.calls[0]?.[0]?.labels as string[] | undefined;
     expect(createdLabels).toEqual(expect.arrayContaining(['project-a', 'to-do']));
+  });
+
+  it('imports due from actual end and derives start from time tracking', async () => {
+    const mock = createMockClient([
+      issueRow('PROJ-50', 'Timed task', {
+        duedate: '2026-10-10',
+        customfield_actual: '2026-10-03T08:00:00.000+03:00',
+        customfield_start: null,
+        timetracking: { timeSpentSeconds: 3600 },
+      }),
+    ]);
+
+    const { result, written } = await runSync({
+      note: '# Notes\n',
+      mock,
+      startDateFieldId: 'customfield_start',
+      actualEndFieldId: 'customfield_actual',
+      targetEndFieldId: 'duedate',
+    });
+
+    expect(written).toContain('Timed task');
+    expect(written).toContain('🛫');
+    expect(written).toContain('📅');
+    expect(
+      result.mappings[0]?.actions.some((action) => action.kind === 'derive-start'),
+    ).toBe(true);
+    expect(result.message).toContain('actual end − time tracking');
+
+    const startWrite = mock.updateIssue.mock.calls.find(
+      (call) => call[0] === 'PROJ-50' && call[1]?.customFields?.customfield_start,
+    );
+    expect(startWrite).toBeTruthy();
+  });
+
+  it('pushes Obsidian due date to target end, not actual end', async () => {
+    const mock = createMockClient([
+      issueRow('PROJ-51', 'Due push', {
+        duedate: '2026-10-10',
+        customfield_actual: '2026-10-03',
+      }),
+    ]);
+
+    const note =
+      '- [ ] [Due push](https://jira.example/browse/PROJ-51) 📅 2026-11-01\n';
+    const { ledger } = await runSync({
+      note,
+      mock,
+      actualEndFieldId: 'customfield_actual',
+      // First sync establishes ledger with pulled actual-end due.
+      conflictPolicy: 'prefer-jira',
+    });
+
+    // Second sync: local due differs from remote actual-end due → push with prefer-obsidian.
+    const noteChanged =
+      '- [ ] [Due push](https://jira.example/browse/PROJ-51) 📅 2026-11-15\n';
+    await runSync({
+      note: noteChanged,
+      mock,
+      ledger,
+      actualEndFieldId: 'customfield_actual',
+      conflictPolicy: 'prefer-obsidian',
+    });
+
+    const duePush = mock.updateIssue.mock.calls.find(
+      (call) => call[0] === 'PROJ-51' && call[1]?.duedate === '2026-11-15',
+    );
+    expect(duePush).toBeTruthy();
+    const actualWrites = mock.updateIssue.mock.calls.filter(
+      (call) => call[1]?.customFields?.customfield_actual !== undefined,
+    );
+    expect(actualWrites).toHaveLength(0);
   });
 });

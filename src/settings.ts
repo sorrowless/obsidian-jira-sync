@@ -42,6 +42,16 @@ export interface PluginSettings {
   jiraApiToken: string;
   /** Custom field id for Start date, e.g. customfield_10015. Empty = skip start sync to Jira. */
   startDateFieldId: string;
+  /**
+   * Actual end field id. When set and filled, wins over target end for Obsidian 📅.
+   * Never written from Obsidian. Empty = ignore actual end.
+   */
+  actualEndFieldId: string;
+  /**
+   * Target end / due field id. Defaults to standard `duedate`.
+   * Obsidian 📅 pushes here.
+   */
+  targetEndFieldId: string;
   mappings: NoteBoardMapping[];
   conflictPolicy: ConflictPolicy;
   syncOnStartup: boolean;
@@ -59,6 +69,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   jiraEmail: '',
   jiraApiToken: '',
   startDateFieldId: '',
+  actualEndFieldId: '',
+  targetEndFieldId: 'duedate',
   mappings: [],
   conflictPolicy: 'prefer-obsidian',
   syncOnStartup: false,

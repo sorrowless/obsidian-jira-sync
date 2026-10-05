@@ -622,9 +622,17 @@ export class JiraClient {
   }
 
   async findStartDateField(): Promise<JiraField | null> {
+    return this.findFieldByName('Start date');
+  }
+
+  /** Case-insensitive exact match on field name (e.g. “Actual end”, “Target end”). */
+  async findFieldByName(name: string): Promise<JiraField | null> {
+    const wanted = name.trim().toLowerCase();
+    if (!wanted) {
+      return null;
+    }
     const fields = await this.listFields();
-    const match = fields.find((field) => field.name.trim().toLowerCase() === 'start date');
-    return match ?? null;
+    return fields.find((field) => field.name.trim().toLowerCase() === wanted) ?? null;
   }
 
   buildUrl(path: string): string {

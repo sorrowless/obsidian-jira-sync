@@ -13,6 +13,11 @@ import {
   type SyncActionDetail,
 } from './actions';
 import {
+  buildTargetEndWritePayload,
+  dateIssueFieldIds,
+  type DateFieldConfig,
+} from './issue-dates';
+import {
   mergeMappingLabels,
   normalizeMappingLabels,
 } from './label-filter';
@@ -68,6 +73,10 @@ export interface SyncEngineOptions {
   client: JiraClient;
   /** Custom field id for Start date; empty skips writing start to Jira. */
   startDateFieldId: string;
+  /** Actual end field; when set, wins over target end for Obsidian due. */
+  actualEndFieldId?: string;
+  /** Target end field (default `duedate`); Obsidian due pushes here. */
+  targetEndFieldId?: string;
   readNote: (path: string) => Promise<string>;
   writeNote: (path: string, content: string) => Promise<void>;
   /** When true, list remotes but do not mutate Jira, notes, or the real ledger. */
@@ -132,7 +141,7 @@ interface MutableTask {
 interface MappingContext {
   columns: BoardColumnView[];
   projectKey: string;
-  startDateFieldId: string;
+  dateFields: DateFieldConfig;
   issueFields: string[];
   /** Normalized OR-filter labels for this mapping (empty = all issues). */
   filterLabels: string[];
@@ -260,7 +269,11 @@ export async function syncOneMapping(
     ctx = await loadMappingContext(
       options.client,
       mapping.boardId,
-      options.startDateFieldId,
+      {
+        startDateFieldId: options.startDateFieldId,
+        actualEndFieldId: options.actualEndFieldId,
+        targetEndFieldId: options.targetEndFieldId,
+      },
       filterLabels,
     );
   } catch (error) {
@@ -292,11 +305,7 @@ export async function syncOneMapping(
         ctx.issueFields,
         syncFilter,
       );
-      remoteMap = indexRemoteIssues(
-        fetched,
-        ctx.columns,
-        ctx.startDateFieldId || undefined,
-      );
+      remoteMap = indexRemoteIssues(fetched, ctx.columns, ctx.dateFields);
     } catch (error) {
       errors.push(errorMessage(error));
     }
@@ -361,7 +370,7 @@ export async function syncOneMapping(
         continue;
       }
 
-      const startErr = startDateConfigError(local, ctx.startDateFieldId);
+      const startErr = startDateConfigError(local, ctx.dateFields.startDateFieldId ?? '');
       if (startErr) {
         errors.push(startErr);
       }
@@ -392,7 +401,7 @@ export async function syncOneMapping(
         if (!dryRun && targetColumn) {
           await transitionToColumn(options.client, created.key, targetColumn, false);
           const refreshed = await options.client.getIssue(created.key, ctx.issueFields);
-          const view = toRemoteIssueView(refreshed, ctx.columns, ctx.startDateFieldId || undefined);
+          const view = toRemoteIssueView(refreshed, ctx.columns, ctx.dateFields);
           Object.assign(created, view);
         }
 
@@ -466,6 +475,13 @@ export async function syncOneMapping(
         writeLedgerFromRemote(workingLedger, key, remote, now);
         counts.unchanged += 1;
         actions.push({ kind: 'unchanged', title: local.title, issueKey });
+        await writeDerivedStartIfNeeded(
+          options.client,
+          remote,
+          ctx,
+          dryRun,
+          actions,
+        );
         await runLabelReconcile(
           options.client,
           remote,
@@ -501,6 +517,13 @@ export async function syncOneMapping(
           actions,
           true,
         );
+        await writeDerivedStartIfNeeded(
+          options.client,
+          remote,
+          ctx,
+          dryRun,
+          actions,
+        );
         await runLabelReconcile(
           options.client,
           remote,
@@ -521,6 +544,13 @@ export async function syncOneMapping(
       entry.unresolved = false;
       counts.unchanged += 1;
       actions.push({ kind: 'unchanged', title: local.title, issueKey });
+      await writeDerivedStartIfNeeded(
+        options.client,
+        remote,
+        ctx,
+        dryRun,
+        actions,
+      );
       await runLabelReconcile(
           options.client,
           remote,
@@ -562,6 +592,13 @@ export async function syncOneMapping(
         actions,
         false,
       );
+      await writeDerivedStartIfNeeded(
+        options.client,
+        remote,
+        ctx,
+        dryRun,
+        actions,
+      );
       await runLabelReconcile(
           options.client,
           remote,
@@ -599,6 +636,13 @@ export async function syncOneMapping(
         counts,
         actions,
         true,
+      );
+      await writeDerivedStartIfNeeded(
+        options.client,
+        remote,
+        ctx,
+        dryRun,
+        actions,
       );
       await runLabelReconcile(
           options.client,
@@ -655,6 +699,13 @@ export async function syncOneMapping(
     }
     localByKey.set(remote.key, created);
     writeLedgerFromRemote(workingLedger, key, remote, now);
+    await writeDerivedStartIfNeeded(
+      options.client,
+      remote,
+      ctx,
+      dryRun,
+      actions,
+    );
     await runLabelReconcile(
           options.client,
           remote,
@@ -664,11 +715,17 @@ export async function syncOneMapping(
           actions,
         );
     counts.createdLocal += 1;
+    const importDetails = ['exists in Jira and was never synced to this note'];
+    if (remote.startDateSource === 'derived' && remote.startDateDerivedDetail) {
+      importDetails.push(remote.startDateDerivedDetail);
+    } else if (remote.dueDateSource === 'actual-end') {
+      importDetails.push('due date from actual end');
+    }
     actions.push({
       kind: 'create-local',
       title: remote.title,
       issueKey: remote.key,
-      detail: 'exists in Jira and was never synced to this note',
+      detail: importDetails.join('; '),
     });
   }
 
@@ -743,25 +800,26 @@ async function pushLocal(
   isConflict: boolean,
   dryRun: boolean,
 ): Promise<void> {
-  const startErr = startDateConfigError(local, ctx.startDateFieldId);
+  const startErr = startDateConfigError(local, ctx.dateFields.startDateFieldId ?? '');
   if (startErr) {
     errors.push(startErr);
   }
 
   try {
     const status = local.status ?? remote.status;
-    const customFields =
+    const targetWrite = buildTargetEndWritePayload(ctx.dateFields, local.dueDate);
+    const startFields =
       startErr === undefined
-        ? buildStartCustomFields(ctx.startDateFieldId, local.startDate)
+        ? buildStartCustomFields(ctx.dateFields.startDateFieldId ?? '', local.startDate)
         : undefined;
 
     if (!dryRun) {
       await options.client.updateIssue(remote.key, {
         summary: local.title,
         description: descriptionFromLines(local.descriptionLines),
-        duedate: toJiraDueDatePayload(local.dueDate),
+        duedate: targetWrite.duedate,
         parentKey: parentIssueKey,
-        customFields,
+        customFields: mergeCustomFields(targetWrite.customFields, startFields),
       });
     }
 
@@ -862,13 +920,22 @@ function pullRemote(
   local.dirty = true;
   markRootDirty(local);
   writeLedgerFromRemote(ledger, key, remote, now);
+  const details: string[] = [];
+  if (isConflict) {
+    details.push('both sides changed; Jira wins');
+  }
+  if (remote.startDateSource === 'derived' && remote.startDateDerivedDetail) {
+    details.push(remote.startDateDerivedDetail);
+  } else if (remote.dueDateSource === 'actual-end') {
+    details.push('due date from actual end');
+  }
   if (isConflict) {
     counts.conflictsResolved += 1;
     actions.push({
       kind: 'conflict-pull',
       title: remote.title,
       issueKey: remote.key,
-      detail: 'both sides changed; Jira wins',
+      detail: details.join('; ') || undefined,
     });
   } else {
     counts.pulled += 1;
@@ -876,8 +943,47 @@ function pullRemote(
       kind: 'pull',
       title: remote.title,
       issueKey: remote.key,
+      detail: details.length > 0 ? details.join('; ') : undefined,
     });
   }
+}
+
+/**
+ * When start was derived from actual end − time tracking and the Jira Start
+ * field is still empty, write the calculated start into Jira and report it.
+ */
+async function writeDerivedStartIfNeeded(
+  client: JiraClient,
+  remote: RemoteIssueView,
+  ctx: MappingContext,
+  dryRun: boolean,
+  actions: SyncActionDetail[],
+): Promise<void> {
+  if (remote.startDateSource !== 'derived' || !remote.startDate) {
+    return;
+  }
+  if (remote.jiraStartDate) {
+    return;
+  }
+  const startFieldId = ctx.dateFields.startDateFieldId?.trim() ?? '';
+  if (!startFieldId) {
+    return;
+  }
+  const detail =
+    remote.startDateDerivedDetail ??
+    'set start date from actual end − time tracking';
+  if (!dryRun) {
+    const customFields = buildStartCustomFields(startFieldId, remote.startDate);
+    if (customFields) {
+      await client.updateIssue(remote.key, { customFields });
+    }
+  }
+  actions.push({
+    kind: 'derive-start',
+    title: remote.title,
+    issueKey: remote.key,
+    detail,
+  });
 }
 
 async function runLabelReconcile(
@@ -934,7 +1040,7 @@ async function runLabelReconcile(
 async function loadMappingContext(
   client: JiraClient,
   boardId: number,
-  startDateFieldId: string,
+  dateFields: DateFieldConfig,
   filterLabels: readonly string[] = [],
 ): Promise<MappingContext> {
   const [board, config] = await Promise.all([
@@ -943,6 +1049,11 @@ async function loadMappingContext(
   ]);
   const columns = columnsFromBoardConfig(config);
   const projectKey = String(board.location?.projectKey ?? '').trim();
+  const normalizedDateFields: DateFieldConfig = {
+    startDateFieldId: dateFields.startDateFieldId?.trim() || undefined,
+    actualEndFieldId: dateFields.actualEndFieldId?.trim() || undefined,
+    targetEndFieldId: dateFields.targetEndFieldId?.trim() || 'duedate',
+  };
   const issueFields = [
     'summary',
     'description',
@@ -951,19 +1062,15 @@ async function loadMappingContext(
     'project',
     'parent',
     'labels',
-    'duedate',
     'updated',
     'created',
+    ...dateIssueFieldIds(normalizedDateFields),
   ];
-  const trimmedStartField = startDateFieldId.trim();
-  if (trimmedStartField) {
-    issueFields.push(trimmedStartField);
-  }
   return {
     columns,
     projectKey,
-    startDateFieldId: trimmedStartField,
-    issueFields,
+    dateFields: normalizedDateFields,
+    issueFields: [...new Set(issueFields)],
     filterLabels: normalizeMappingLabels(filterLabels),
   };
 }
@@ -977,8 +1084,9 @@ async function createRemoteIssue(
   labels: string[],
   includeStartField: boolean,
 ): Promise<RemoteIssueView> {
-  const customFields = includeStartField
-    ? buildStartCustomFields(ctx.startDateFieldId, local.startDate)
+  const targetWrite = buildTargetEndWritePayload(ctx.dateFields, local.dueDate);
+  const startFields = includeStartField
+    ? buildStartCustomFields(ctx.dateFields.startDateFieldId ?? '', local.startDate)
     : undefined;
 
   const created = await client.createIssue({
@@ -988,15 +1096,11 @@ async function createRemoteIssue(
     parentKey: parentIssueKey,
     issueTypeName: parentIssueKey ? 'Sub-task' : undefined,
     labels: labels.length > 0 ? labels : undefined,
-    duedate: toJiraDueDatePayload(local.dueDate),
-    customFields,
+    duedate: targetWrite.duedate,
+    customFields: mergeCustomFields(targetWrite.customFields, startFields),
   });
 
-  return toRemoteIssueView(
-    created,
-    ctx.columns,
-    ctx.startDateFieldId || undefined,
-  );
+  return toRemoteIssueView(created, ctx.columns, ctx.dateFields);
 }
 
 async function transitionToColumn(
@@ -1054,10 +1158,27 @@ function fakeCreatedIssue(
     labels: [...labels],
     startDate: local.startDate,
     dueDate: local.dueDate,
+    startDateSource: local.startDate ? 'field' : null,
+    dueDateSource: local.dueDate ? 'target-end' : null,
+    jiraStartDate: local.startDate,
+    startDateDerivedDetail: null,
     updated,
     projectKey,
     isSubtask: local.parent?.issueKey !== null && local.parent?.issueKey !== undefined,
   };
+}
+
+function mergeCustomFields(
+  ...parts: Array<Record<string, unknown> | undefined>
+): Record<string, unknown> | undefined {
+  const merged: Record<string, unknown> = {};
+  for (const part of parts) {
+    if (!part) {
+      continue;
+    }
+    Object.assign(merged, part);
+  }
+  return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
 function writeLedgerFromRemote(
@@ -1346,6 +1467,7 @@ function summarizeRun(
     countKind(actions, 'unresolved-missing-local');
   const recovered = countKind(actions, 'recovered-pending');
   const labelFixes = countKind(actions, 'reconcile-labels');
+  const derivedStarts = countKind(actions, 'derive-start');
 
   if (createRemote > 0) {
     parts.push(
@@ -1380,6 +1502,13 @@ function summarizeRun(
       dryRun
         ? `${labelFixes} would reconcile labels`
         : `${labelFixes} label reconciliation${labelFixes === 1 ? '' : 's'}`,
+    );
+  }
+  if (derivedStarts > 0) {
+    parts.push(
+      dryRun
+        ? `${derivedStarts} would set start from actual end − time tracking`
+        : `${derivedStarts} set start from actual end − time tracking`,
     );
   }
   if (unresolved > 0) {

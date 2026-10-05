@@ -29,7 +29,7 @@ Start and due dates live **after** the title link (not inside the `[...]` bracke
 | Marker | Meaning | Jira field |
 | --- | --- | --- |
 | `🛫` | Start | Configured custom Start date field (settings) |
-| `📅` | Due | Standard `duedate` |
+| `📅` | Due | Actual end when set, otherwise Target end (`duedate` by default). Obsidian edits write Target end only |
 
 Accepted values: `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` (local time). After sync the plugin rewrites the line in this canonical form; the link text stays the title only. Due dates sent to Jira use the calendar date only.
 

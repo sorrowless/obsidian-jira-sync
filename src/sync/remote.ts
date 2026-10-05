@@ -1,12 +1,17 @@
-import { normalizeJiraDate } from '../note/dates';
 import type { JiraIssue } from '../jira/types';
+import {
+  resolveIssueDates,
+  type DateFieldConfig,
+  type DueDateSource,
+  type StartDateSource,
+} from './issue-dates';
+import { normalizeDescription } from './ledger';
 import {
   columnForStatusId,
   statusFromJiraStatus,
   type BoardColumnView,
   type TaskStatus,
 } from './status';
-import { normalizeDescription } from './ledger';
 
 export interface RemoteIssueView {
   key: string;
@@ -20,6 +25,13 @@ export interface RemoteIssueView {
   labels: string[];
   startDate: string | null;
   dueDate: string | null;
+  /** How startDate was obtained (field vs actual end − time tracking). */
+  startDateSource: StartDateSource;
+  dueDateSource: DueDateSource;
+  /** Raw Start date custom field before derivation. */
+  jiraStartDate: string | null;
+  /** Human detail when startDateSource === 'derived'. */
+  startDateDerivedDetail: string | null;
   updated: string;
   projectKey: string;
   isSubtask: boolean;
@@ -28,11 +40,11 @@ export interface RemoteIssueView {
 export function indexRemoteIssues(
   issues: readonly JiraIssue[],
   columns: ReadonlyArray<BoardColumnView>,
-  startDateFieldId?: string,
+  dateFields?: DateFieldConfig | string,
 ): Map<string, RemoteIssueView> {
   const map = new Map<string, RemoteIssueView>();
   for (const issue of issues) {
-    const view = toRemoteIssueView(issue, columns, startDateFieldId);
+    const view = toRemoteIssueView(issue, columns, dateFields);
     map.set(view.key, view);
   }
   return map;
@@ -41,7 +53,7 @@ export function indexRemoteIssues(
 export function toRemoteIssueView(
   issue: JiraIssue,
   columns: ReadonlyArray<BoardColumnView>,
-  startDateFieldId?: string,
+  dateFields?: DateFieldConfig | string,
 ): RemoteIssueView {
   const fields = issue.fields ?? {};
   const statusId = String(fields.status?.id ?? '');
@@ -51,10 +63,11 @@ export function toRemoteIssueView(
   const columnName = column?.name ?? statusName;
   const parentKey = fields.parent?.key ? String(fields.parent.key).toUpperCase() : null;
 
-  let startDate: string | null = null;
-  if (startDateFieldId) {
-    startDate = normalizeJiraDate(fields[startDateFieldId]);
-  }
+  const config: DateFieldConfig =
+    typeof dateFields === 'string'
+      ? { startDateFieldId: dateFields }
+      : (dateFields ?? {});
+  const dates = resolveIssueDates(fields as Record<string, unknown>, config);
 
   return {
     key: String(issue.key).toUpperCase(),
@@ -66,8 +79,12 @@ export function toRemoteIssueView(
     columnName,
     parentIssueKey: parentKey,
     labels: Array.isArray(fields.labels) ? fields.labels.map(String) : [],
-    startDate,
-    dueDate: normalizeJiraDate(fields.duedate),
+    startDate: dates.startDate,
+    dueDate: dates.dueDate,
+    startDateSource: dates.startDateSource,
+    dueDateSource: dates.dueDateSource,
+    jiraStartDate: dates.jiraStartDate,
+    startDateDerivedDetail: dates.startDateDerivedDetail,
     updated: String(fields.updated ?? ''),
     projectKey: String(fields.project?.key ?? ''),
     isSubtask: Boolean(fields.issuetype?.subtask),
