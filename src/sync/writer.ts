@@ -1,4 +1,5 @@
 import { issueBrowseUrl } from '../jira/urls';
+import { formatAssigneeSuffix } from '../note/assignee';
 import { formatTaskDatesSuffix } from '../note/dates';
 import { checkboxFromStatus } from './status';
 
@@ -10,6 +11,7 @@ export interface RenderableTask {
   issueKey: string | null;
   startDate?: string | null;
   dueDate?: string | null;
+  assignee?: string | null;
   descriptionLines: string[];
   children: RenderableTask[];
 }
@@ -34,7 +36,7 @@ export function renderTask(
     task.issueKey !== null
       ? `[${task.title}](${issueBrowseUrl(baseUrl, task.issueKey)})`
       : task.title;
-  const body = `${linkOrTitle}${formatTaskDatesSuffix(task.startDate ?? null, task.dueDate ?? null)}`;
+  const body = `${linkOrTitle}${formatTaskDatesSuffix(task.startDate ?? null, task.dueDate ?? null)}${formatAssigneeSuffix(task.assignee ?? null)}`;
   lines.push(`${task.indent}${task.listMarker} [${task.checkboxChar}] ${body}`);
 
   const childIndent = `${task.indent}${indentUnit}`;

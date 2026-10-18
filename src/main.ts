@@ -11,6 +11,14 @@ import {
   syncIntervalToMilliseconds,
   type PluginSettings,
 } from './settings';
+import {
+  collectAssigneesFromIssues,
+  jiraAssigneeDisplayName,
+  jiraAssigneeIdentity,
+  normalizeAssigneeMappings,
+  prepareAssigneeMappingsForSave,
+  type KnownJiraAssignee,
+} from './sync/assignee';
 import { SyncCoordinator } from './sync/coordinator';
 import { syncAllMappings } from './sync/engine';
 import { emptyLedger, type LedgerStore, type PendingLink, normalizeLedgerStore } from './sync/ledger';
@@ -110,6 +118,7 @@ export default class JiraSyncPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     prepareMappingsForSave(this.settings.mappings);
+    prepareAssigneeMappingsForSave(this.settings.assigneeMappings);
     await this.savePluginData();
     this.restartScheduler();
   }
@@ -188,6 +197,67 @@ export default class JiraSyncPlugin extends Plugin {
     }
   }
 
+  /**
+   * Load assignees already present on mapped boards (not the full user directory).
+   * Stores them in settings.knownAssignees for the mapping dropdown.
+   */
+  async refreshKnownAssignees(): Promise<
+    { ok: true; count: number } | { ok: false; message: string }
+  > {
+    const boardIds = [
+      ...new Set(
+        this.settings.mappings
+          .map((mapping) => mapping.boardId)
+          .filter((id) => Number.isFinite(id) && id > 0),
+      ),
+    ];
+    if (boardIds.length === 0) {
+      return { ok: false, message: 'Add at least one board mapping before loading assignees.' };
+    }
+
+    try {
+      const client = this.createJiraClient();
+      const byId = new Map<string, KnownJiraAssignee>();
+      for (const boardId of boardIds) {
+        const users = await client.listBoardAssignees(boardId);
+        for (const user of users) {
+          const accountId = jiraAssigneeIdentity(user);
+          if (!accountId) {
+            continue;
+          }
+          const key = accountId.toLowerCase();
+          if (byId.has(key)) {
+            continue;
+          }
+          byId.set(key, {
+            accountId,
+            displayName: jiraAssigneeDisplayName(user) || accountId,
+            name: String(user.name ?? '').trim() || undefined,
+          });
+        }
+        // Also harvest from the sync fetch path in case Agile board view is sparse.
+        try {
+          const issues = await client.listBoardIssuesForSync(boardId, ['assignee']);
+          for (const known of collectAssigneesFromIssues(issues)) {
+            const key = known.accountId.toLowerCase();
+            if (!byId.has(key)) {
+              byId.set(key, known);
+            }
+          }
+        } catch {
+          // Best-effort.
+        }
+      }
+      this.settings.knownAssignees = [...byId.values()].sort((a, b) =>
+        a.displayName.localeCompare(b.displayName, undefined, { sensitivity: 'base' }),
+      );
+      await this.saveSettings();
+      return { ok: true, count: this.settings.knownAssignees.length };
+    } catch (error) {
+      return { ok: false, message: formatConnectionError(error) };
+    }
+  }
+
   async listBoardLabels(
     boardId: number,
   ): Promise<{ ok: true; labels: string[] } | { ok: false; message: string }> {
@@ -258,6 +328,7 @@ export default class JiraSyncPlugin extends Plugin {
           startDateFieldId: this.settings.startDateFieldId,
           actualEndFieldId: this.settings.actualEndFieldId,
           targetEndFieldId: this.settings.targetEndFieldId,
+          assigneeMappings: this.settings.assigneeMappings,
           dryRun,
           readNote: async (path) => {
             const file = resolveMarkdownFile(this.app, path);
@@ -375,6 +446,20 @@ function normalizeSettings(saved: Partial<PluginSettings>): PluginSettings {
       typeof saved.targetEndFieldId === 'string' && saved.targetEndFieldId.trim()
         ? saved.targetEndFieldId.trim()
         : 'duedate',
+    assigneeMappings: normalizeAssigneeMappings(
+      Array.isArray(saved.assigneeMappings) ? saved.assigneeMappings : [],
+    ),
+    knownAssignees: Array.isArray(saved.knownAssignees)
+      ? saved.knownAssignees
+          .map((item) => ({
+            accountId: String(item?.accountId ?? '').trim(),
+            displayName:
+              String(item?.displayName ?? '').trim() ||
+              String(item?.accountId ?? '').trim(),
+            name: String(item?.name ?? '').trim() || undefined,
+          }))
+          .filter((item) => item.accountId.length > 0)
+      : [],
   };
 }
 

@@ -10,7 +10,7 @@ Map selected Obsidian notes to Jira boards (optionally filtered by labels and/or
 
 - Create missing tasks on either side
 - Filter a shared board across notes with per-mapping label lists (OR match; empty = whole board) and optional “last N days/months” windows
-- Update title, description, start/due dates, coarse status, and nested subtasks
+- Update title, description, start/due dates, optional Dataview `[assignee:: …]`, coarse status, and nested subtasks
 - Keep status labels aligned with the board column (column wins over conflicting status labels)
 - Resolve simultaneous edits with a Prefer Obsidian / Prefer Jira setting
 - Run on demand, on a timer, at startup, or shortly after you edit a mapped note

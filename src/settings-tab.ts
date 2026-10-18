@@ -13,6 +13,7 @@ import {
   type NoteBoardMapping,
   type SyncIntervalUnit,
 } from './settings';
+import type { AssigneeMapping } from './sync/assignee';
 import {
   formatLabelList,
   normalizeMappingLabels,
@@ -43,6 +44,7 @@ export class JiraSyncSettingTab extends PluginSettingTab {
 
     this.renderConnectionSection(containerEl);
     this.renderDateFieldsSection(containerEl);
+    this.renderAssigneeMappingsSection(containerEl);
     this.renderMappingsSection(containerEl);
     this.renderConflictSection(containerEl);
     this.renderTriggersSection(containerEl);
@@ -221,6 +223,123 @@ export class JiraSyncSettingTab extends PluginSettingTab {
     } else {
       new Notice(`Jira Sync: ${result.message}`);
     }
+  }
+
+  private renderAssigneeMappingsSection(containerEl: HTMLElement): void {
+    containerEl.createEl('h3', { text: 'Assignee mappings' });
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text: 'Map Jira assignees (seen on your boards) to Dataview fields like [assignee:: Аряпов]. Open tasks sync assignee both ways; when values differ Obsidian wins. Done↔done tasks are skipped. Unmapped users are ignored.',
+    });
+
+    new Setting(containerEl)
+      .setName('Load assignees from boards')
+      .setDesc(
+        'Collect users already assigned on mapped boards (not the full Jira directory). Required before the dropdowns are useful.',
+      )
+      .addButton((button) =>
+        button.setButtonText('Refresh assignees').onClick(async () => {
+          button.setDisabled(true);
+          try {
+            const result = await this.plugin.refreshKnownAssignees();
+            if (!result.ok) {
+              new Notice(`Jira Sync: ${result.message}`);
+              return;
+            }
+            new Notice(`Jira Sync: loaded ${result.count} assignee(s) from boards.`);
+            this.display();
+          } finally {
+            button.setDisabled(false);
+          }
+        }),
+      );
+
+    const known = this.plugin.settings.knownAssignees ?? [];
+    if (known.length === 0) {
+      containerEl.createEl('p', {
+        cls: 'setting-item-description',
+        text: 'No board assignees cached yet. Add note↔board mappings, then click Refresh assignees.',
+      });
+    }
+
+    const rows = this.plugin.settings.assigneeMappings ?? [];
+    rows.forEach((row, index) => {
+      new Setting(containerEl)
+        .setName(`Assignee ${index + 1}`)
+        .setDesc('Jira user → Obsidian Dataview value')
+        .addDropdown((dropdown) => {
+          dropdown.addOption('', '— select Jira user —');
+          for (const user of known) {
+            dropdown.addOption(user.accountId, user.displayName);
+          }
+          // Keep a saved mapping visible even if it is not in the latest refresh.
+          if (
+            row.jiraAccountId &&
+            !known.some((user) => user.accountId === row.jiraAccountId)
+          ) {
+            dropdown.addOption(
+              row.jiraAccountId,
+              row.jiraDisplayName || row.jiraAccountId,
+            );
+          }
+          dropdown.setValue(row.jiraAccountId || '');
+          dropdown.onChange(async (value) => {
+            const current = this.plugin.settings.assigneeMappings[index];
+            if (!current) {
+              return;
+            }
+            const match =
+              known.find((user) => user.accountId === value) ??
+              (value
+                ? {
+                    accountId: value,
+                    displayName: current.jiraDisplayName || value,
+                    name: current.jiraName,
+                  }
+                : null);
+            current.jiraAccountId = match?.accountId ?? '';
+            current.jiraDisplayName = match?.displayName ?? '';
+            current.jiraName = match?.name;
+            await this.plugin.saveSettings();
+          });
+        })
+        .addText((text) =>
+          text
+            .setPlaceholder('Аряпов')
+            .setValue(row.obsidianValue)
+            .onChange(async (value) => {
+              const current = this.plugin.settings.assigneeMappings[index];
+              if (!current) {
+                return;
+              }
+              current.obsidianValue = value;
+              await this.plugin.saveSettings();
+            }),
+        )
+        .addExtraButton((button) => {
+          button
+            .setIcon('trash')
+            .setTooltip('Remove assignee mapping')
+            .onClick(async () => {
+              this.plugin.settings.assigneeMappings.splice(index, 1);
+              await this.plugin.saveSettings();
+              this.display();
+            });
+        });
+    });
+
+    new Setting(containerEl).addButton((button) =>
+      button.setButtonText('Add assignee mapping').onClick(async () => {
+        const blank: AssigneeMapping = {
+          jiraAccountId: '',
+          jiraDisplayName: '',
+          obsidianValue: '',
+        };
+        this.plugin.settings.assigneeMappings.push(blank);
+        await this.plugin.savePluginData();
+        this.display();
+      }),
+    );
   }
 
   private renderMappingsSection(containerEl: HTMLElement): void {

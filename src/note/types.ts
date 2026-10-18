@@ -29,6 +29,8 @@ export interface ParsedTaskNode {
   startDate: string | null;
   /** ISO UTC due time, or null when unset. From Actual/Target end; pushes to Target end. */
   dueDate: string | null;
+  /** Dataview `[assignee:: …]` value, or null when unset. */
+  assignee: string | null;
   /** Indented non-checkbox bullets under this task (description). */
   descriptionLines: string[];
   /** Source line indices for descriptionLines (parallel array). */

@@ -81,8 +81,18 @@ Rules:
 | --- | --- | --- |
 | `🛫` | Start | `startDateFieldId` when set; else derived as Actual end − time spent when both exist (then written into Start) |
 | `📅` | Due | Actual end (`actualEndFieldId`) if set, else Target end (`targetEndFieldId`, default `duedate`). Obsidian → Target end only |
+| `[assignee:: value]` | Assignee | Dataview field ↔ Jira `assignee` via `assigneeMappings` |
 
 Accepted note values: `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` (local time). Due/target writes to Jira use the date portion only. Date-only Actual end is treated as end of that local day before subtracting time spent.
+
+### Assignee sync
+
+1. Only complete mappings (Jira id + Obsidian value) participate.
+2. Skip when both local and remote status are `done`.
+3. Empty local + mapped remote → write Dataview field in the note.
+4. Mapped local + empty remote → set Jira assignee.
+5. Both set and differ → Obsidian wins (update Jira when local value is mapped).
+6. Unmapped identities → no-op for that direction.
 
 ## Done / workflow status
 

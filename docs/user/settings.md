@@ -25,6 +25,23 @@ Due date resolution from Jira: **Actual end** if set, else **Target end**, else 
 
 Start resolution from Jira: Start field if set; otherwise, when Actual end and time tracking (time spent) are both present, start = Actual end − time spent. Sync then writes that value into the Start field and reports **set start date from actual end − time tracking** in the notice/report.
 
+## Assignee mappings
+
+Map Jira users (already assigned on your boards) to Dataview inline values written as `[assignee:: …]` on checklist lines.
+
+| Control | Purpose |
+| --- | --- |
+| **Refresh assignees** | Load users currently assigned on issues of your mapped boards (not the full Jira directory) |
+| Jira user dropdown | Pick a loaded assignee |
+| Obsidian value | Text for the Dataview field, e.g. `Аряпов` → `[assignee:: Аряпов]` |
+
+Sync rules (open tasks only — skipped when **both** Obsidian and Jira are done):
+
+- Obsidian empty, Jira mapped → set `[assignee:: …]` in the note
+- Obsidian mapped, Jira empty → set Jira assignee
+- Both set and differ → Obsidian wins (updates Jira)
+- Unmapped user/value → no change for that side
+
 ## Note ↔ board mappings
 
 Each mapping pairs one Obsidian note with one Jira **board**.

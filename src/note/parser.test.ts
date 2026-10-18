@@ -31,4 +31,14 @@ describe('parseNoteTasks', () => {
     expect(roots[0]?.issueKey).toBeNull();
     expect(roots[0]?.title).toBe('X');
   });
+
+  it('parses Dataview assignee fields', () => {
+    const roots = parseNoteTasks(
+      '- [ ] [Parent](https://jira.example/browse/PROJ-1) 📅 2026-10-05 [assignee:: Аряпов]',
+      { jiraBaseUrl: BASE },
+    );
+    expect(roots[0]?.assignee).toBe('Аряпов');
+    expect(roots[0]?.title).toBe('Parent');
+    expect(roots[0]?.dueDate).toBeTruthy();
+  });
 });

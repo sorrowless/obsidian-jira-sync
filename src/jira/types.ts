@@ -40,6 +40,16 @@ export interface JiraProjectRef {
   name?: string;
 }
 
+/** Assignee / user ref as returned by Jira REST. */
+export interface JiraAssigneeRef {
+  accountId?: string;
+  displayName?: string;
+  name?: string;
+  key?: string;
+  emailAddress?: string;
+  active?: boolean;
+}
+
 export interface JiraIssueFields {
   summary?: string;
   description?: unknown;
@@ -48,6 +58,7 @@ export interface JiraIssueFields {
   project?: JiraProjectRef;
   parent?: { key?: string; id?: string };
   labels?: string[];
+  assignee?: JiraAssigneeRef | null;
   duedate?: string | null;
   updated?: string;
   created?: string;
@@ -112,6 +123,8 @@ export interface CreateIssueInput {
   parentKey?: string | null;
   labels?: string[];
   duedate?: string | null;
+  /** Cloud `{ accountId }` or Server `{ name }`. */
+  assignee?: { accountId: string } | { name: string } | null;
   /** Map of custom field id → value (e.g. start date). */
   customFields?: Record<string, unknown>;
 }
@@ -122,5 +135,7 @@ export interface UpdateIssueInput {
   labels?: string[];
   duedate?: string | null;
   parentKey?: string | null;
+  /** Cloud `{ accountId }` or Server `{ name }`; `null` clears assignee. */
+  assignee?: { accountId: string } | { name: string } | null;
   customFields?: Record<string, unknown>;
 }

@@ -12,6 +12,7 @@ import { boardProjectJql } from './jql';
 import {
   JiraApiError,
   type CreateIssueInput,
+  type JiraAssigneeRef,
   type JiraBoard,
   type JiraBoardConfiguration,
   type JiraField,
@@ -162,6 +163,50 @@ export class JiraClient {
     }
 
     return collector.values();
+  }
+
+  /**
+   * Assignees already present on board / backlog issues (not the full user directory).
+   * Deduped by accountId / name / key.
+   */
+  async listBoardAssignees(boardId: number): Promise<JiraAssigneeRef[]> {
+    const byId = new Map<string, JiraAssigneeRef>();
+    const add = (user: JiraAssigneeRef | null | undefined) => {
+      if (!user) {
+        return;
+      }
+      const id =
+        String(user.accountId ?? '').trim() ||
+        String(user.name ?? '').trim() ||
+        String(user.key ?? '').trim();
+      if (!id) {
+        return;
+      }
+      const key = id.toLowerCase();
+      if (!byId.has(key)) {
+        byId.set(key, user);
+      }
+    };
+
+    const boardIssues = await this.listBoardIssues(boardId, ['assignee']);
+    for (const issue of boardIssues) {
+      add(issue.fields.assignee ?? null);
+    }
+
+    try {
+      const backlog = await this.listBoardBacklogIssues(boardId, ['assignee']);
+      for (const issue of backlog) {
+        add(issue.fields.assignee ?? null);
+      }
+    } catch {
+      // Kanban / some boards have no backlog endpoint.
+    }
+
+    return [...byId.values()].sort((a, b) => {
+      const left = String(a.displayName ?? a.name ?? a.accountId ?? '');
+      const right = String(b.displayName ?? b.name ?? b.accountId ?? '');
+      return left.localeCompare(right, undefined, { sensitivity: 'base' });
+    });
   }
 
   /** Paginated global label catalog (Cloud + modern Server/DC). */
@@ -564,6 +609,9 @@ export class JiraClient {
     if (input.duedate !== undefined) {
       fields.duedate = input.duedate;
     }
+    if (input.assignee !== undefined) {
+      fields.assignee = input.assignee;
+    }
     if (input.customFields) {
       Object.assign(fields, input.customFields);
     }
@@ -589,6 +637,9 @@ export class JiraClient {
     }
     if (input.duedate !== undefined) {
       fields.duedate = input.duedate;
+    }
+    if (input.assignee !== undefined) {
+      fields.assignee = input.assignee;
     }
     if (input.parentKey !== undefined) {
       fields.parent = input.parentKey ? { key: input.parentKey } : null;

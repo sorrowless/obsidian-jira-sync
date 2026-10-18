@@ -1,4 +1,5 @@
 import { extractIssueKeyFromUrl } from '../jira/urls';
+import { parseAssigneeField } from './assignee';
 import { parseTaskDates } from './dates';
 import type { ParseNoteOptions, ParsedTaskNode } from './types';
 import {
@@ -26,6 +27,7 @@ interface FlatTask {
   issueKey: string | null;
   startDate: string | null;
   dueDate: string | null;
+  assignee: string | null;
   descriptionLines: string[];
   descriptionLineIndices: number[];
 }
@@ -69,6 +71,7 @@ export function parseNoteTasks(markdown: string, options: ParseNoteOptions): Par
         issueKey: resolved.issueKey,
         startDate: resolved.startDate,
         dueDate: resolved.dueDate,
+        assignee: resolved.assignee,
         descriptionLines: [],
         descriptionLineIndices: [],
       });
@@ -115,27 +118,32 @@ function resolveTaskBody(
   issueKey: string | null;
   startDate: string | null;
   dueDate: string | null;
+  assignee: string | null;
 } {
   const linkMatch = body.match(LINK_AT_START);
   if (linkMatch) {
     const title = linkMatch[1] ?? '';
     const url = linkMatch[2] ?? '';
     const suffix = linkMatch[3] ?? '';
-    const dates = parseTaskDates(suffix);
+    const withAssignee = parseAssigneeField(suffix);
+    const dates = parseTaskDates(withAssignee.remainder);
     return {
       title: title.trim() || dates.remainder,
       issueKey: extractIssueKeyFromUrl(url, jiraBaseUrl),
       startDate: dates.startDate,
       dueDate: dates.dueDate,
+      assignee: withAssignee.assignee,
     };
   }
 
-  const dates = parseTaskDates(body);
+  const withAssignee = parseAssigneeField(body);
+  const dates = parseTaskDates(withAssignee.remainder);
   return {
     title: dates.remainder,
     issueKey: null,
     startDate: dates.startDate,
     dueDate: dates.dueDate,
+    assignee: withAssignee.assignee,
   };
 }
 
@@ -189,6 +197,7 @@ function buildTree(tasks: FlatTask[]): ParsedTaskNode[] {
       issueKey: flat.issueKey,
       startDate: flat.startDate,
       dueDate: flat.dueDate,
+      assignee: flat.assignee,
       descriptionLines: flat.descriptionLines,
       descriptionLineIndices: flat.descriptionLineIndices,
       children: [],

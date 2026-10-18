@@ -1,5 +1,9 @@
 import type { JiraIssue } from '../jira/types';
 import {
+  jiraAssigneeDisplayName,
+  jiraAssigneeIdentity,
+} from './assignee';
+import {
   resolveIssueDates,
   type DateFieldConfig,
   type DueDateSource,
@@ -32,6 +36,9 @@ export interface RemoteIssueView {
   jiraStartDate: string | null;
   /** Human detail when startDateSource === 'derived'. */
   startDateDerivedDetail: string | null;
+  /** Stable Jira assignee id (accountId / name / key), or null. */
+  assigneeAccountId: string | null;
+  assigneeDisplayName: string | null;
   updated: string;
   projectKey: string;
   isSubtask: boolean;
@@ -68,6 +75,7 @@ export function toRemoteIssueView(
       ? { startDateFieldId: dateFields }
       : (dateFields ?? {});
   const dates = resolveIssueDates(fields as Record<string, unknown>, config);
+  const assignee = fields.assignee ?? null;
 
   return {
     key: String(issue.key).toUpperCase(),
@@ -85,6 +93,8 @@ export function toRemoteIssueView(
     dueDateSource: dates.dueDateSource,
     jiraStartDate: dates.jiraStartDate,
     startDateDerivedDetail: dates.startDateDerivedDetail,
+    assigneeAccountId: jiraAssigneeIdentity(assignee),
+    assigneeDisplayName: jiraAssigneeDisplayName(assignee) || null,
     updated: String(fields.updated ?? ''),
     projectKey: String(fields.project?.key ?? ''),
     isSubtask: Boolean(fields.issuetype?.subtask),

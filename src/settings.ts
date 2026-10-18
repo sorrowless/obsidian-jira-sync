@@ -4,7 +4,14 @@ import {
   type RecencyField,
   type RecencyUnit,
 } from './jira/jql';
+import {
+  normalizeAssigneeMappings,
+  type AssigneeMapping,
+  type KnownJiraAssignee,
+} from './sync/assignee';
 import { normalizeMappingLabels } from './sync/label-filter';
+
+export type { AssigneeMapping, KnownJiraAssignee };
 
 export type ConflictPolicy = 'prefer-obsidian' | 'prefer-jira';
 export type SyncIntervalUnit = 'minutes' | 'hours';
@@ -52,6 +59,13 @@ export interface PluginSettings {
    * Obsidian 📅 pushes here.
    */
   targetEndFieldId: string;
+  /**
+   * Jira assignee ↔ Obsidian Dataview `[assignee:: value]` mappings.
+   * Only mapped users participate in assignee sync.
+   */
+  assigneeMappings: AssigneeMapping[];
+  /** Cached assignees seen on mapped boards (for settings dropdowns). */
+  knownAssignees: KnownJiraAssignee[];
   mappings: NoteBoardMapping[];
   conflictPolicy: ConflictPolicy;
   syncOnStartup: boolean;
@@ -71,6 +85,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   startDateFieldId: '',
   actualEndFieldId: '',
   targetEndFieldId: 'duedate',
+  assigneeMappings: [],
+  knownAssignees: [],
   mappings: [],
   conflictPolicy: 'prefer-obsidian',
   syncOnStartup: false,

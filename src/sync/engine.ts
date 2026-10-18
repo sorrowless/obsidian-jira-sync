@@ -13,6 +13,13 @@ import {
   type SyncActionDetail,
 } from './actions';
 import {
+  decideAssigneeReconcile,
+  findMappingByObsidianValue,
+  normalizeAssigneeMappings,
+  toJiraAssigneePayload,
+  type AssigneeMapping,
+} from './assignee';
+import {
   buildTargetEndWritePayload,
   dateIssueFieldIds,
   type DateFieldConfig,
@@ -77,6 +84,8 @@ export interface SyncEngineOptions {
   actualEndFieldId?: string;
   /** Target end field (default `duedate`); Obsidian due pushes here. */
   targetEndFieldId?: string;
+  /** Jira ↔ Obsidian Dataview assignee mappings. */
+  assigneeMappings?: AssigneeMapping[];
   readNote: (path: string) => Promise<string>;
   writeNote: (path: string, content: string) => Promise<void>;
   /** When true, list remotes but do not mutate Jira, notes, or the real ledger. */
@@ -94,6 +103,7 @@ export interface MappingSyncCounts {
   unresolvedRemovals: number;
   recoveredPendingLinks: number;
   labelReconciliations: number;
+  assigneeReconciliations: number;
 }
 
 export interface MappingSyncResult {
@@ -132,6 +142,7 @@ interface MutableTask {
   issueKey: string | null;
   startDate: string | null;
   dueDate: string | null;
+  assignee: string | null;
   children: MutableTask[];
   parent: MutableTask | null;
   isNew: boolean;
@@ -145,6 +156,7 @@ interface MappingContext {
   issueFields: string[];
   /** Normalized OR-filter labels for this mapping (empty = all issues). */
   filterLabels: string[];
+  assigneeMappings: AssigneeMapping[];
 }
 
 let fakeIssueCounter = 0;
@@ -275,6 +287,7 @@ export async function syncOneMapping(
         targetEndFieldId: options.targetEndFieldId,
       },
       filterLabels,
+      options.assigneeMappings,
     );
   } catch (error) {
     return {
@@ -405,21 +418,32 @@ export async function syncOneMapping(
           Object.assign(created, view);
         }
 
+        local.issueKey = created.key;
+        local.dirty = true;
+        markRootDirty(local);
+        localByKey.set(created.key, local);
+
         if (!dryRun) {
           await runLabelReconcile(
+            options.client,
+            created,
+            ctx,
+            dryRun,
+            counts,
+            actions,
+          );
+        }
+        await runAssigneeReconcile(
           options.client,
+          local,
           created,
           ctx,
           dryRun,
           counts,
           actions,
+          errors,
         );
-        }
 
-        local.issueKey = created.key;
-        local.dirty = true;
-        markRootDirty(local);
-        localByKey.set(created.key, local);
         writeLedgerFromRemote(workingLedger, key, created, now);
 
         createdPending.push({
@@ -490,6 +514,16 @@ export async function syncOneMapping(
           counts,
           actions,
         );
+        await runAssigneeReconcile(
+          options.client,
+          local,
+          remote,
+          ctx,
+          dryRun,
+          counts,
+          actions,
+          errors,
+        );
       } else if (options.conflictPolicy === 'prefer-obsidian') {
         await pushLocal(
           options,
@@ -532,6 +566,16 @@ export async function syncOneMapping(
           counts,
           actions,
         );
+        await runAssigneeReconcile(
+          options.client,
+          local,
+          remote,
+          ctx,
+          dryRun,
+          counts,
+          actions,
+          errors,
+        );
       }
       continue;
     }
@@ -559,6 +603,16 @@ export async function syncOneMapping(
           counts,
           actions,
         );
+      await runAssigneeReconcile(
+        options.client,
+        local,
+        remote,
+        ctx,
+        dryRun,
+        counts,
+        actions,
+        errors,
+      );
       continue;
     }
 
@@ -607,6 +661,16 @@ export async function syncOneMapping(
           counts,
           actions,
         );
+      await runAssigneeReconcile(
+        options.client,
+        local,
+        remote,
+        ctx,
+        dryRun,
+        counts,
+        actions,
+        errors,
+      );
       continue;
     }
 
@@ -652,6 +716,16 @@ export async function syncOneMapping(
           counts,
           actions,
         );
+      await runAssigneeReconcile(
+        options.client,
+        local,
+        remote,
+        ctx,
+        dryRun,
+        counts,
+        actions,
+        errors,
+      );
     }
   }
 
@@ -714,6 +788,16 @@ export async function syncOneMapping(
           counts,
           actions,
         );
+    await runAssigneeReconcile(
+      options.client,
+      created,
+      remote,
+      ctx,
+      dryRun,
+      counts,
+      actions,
+      errors,
+    );
     counts.createdLocal += 1;
     const importDetails = ['exists in Jira and was never synced to this note'];
     if (remote.startDateSource === 'derived' && remote.startDateDerivedDetail) {
@@ -862,6 +946,16 @@ async function pushLocal(
           counts,
           actions,
         );
+    await runAssigneeReconcile(
+      options.client,
+      local,
+      labelRemote,
+      ctx,
+      dryRun,
+      counts,
+      actions,
+      errors,
+    );
 
     writeLedgerFromLocal(
       ledger,
@@ -986,6 +1080,71 @@ async function writeDerivedStartIfNeeded(
   });
 }
 
+/**
+ * Sync Dataview `[assignee:: …]` ↔ Jira assignee for open tasks.
+ * Skipped when both Obsidian and Jira are done. Unmapped users are ignored.
+ */
+async function runAssigneeReconcile(
+  client: JiraClient,
+  local: MutableTask,
+  remote: RemoteIssueView,
+  ctx: MappingContext,
+  dryRun: boolean,
+  counts: MappingSyncCounts,
+  actions: SyncActionDetail[],
+  errors: string[],
+): Promise<void> {
+  if (ctx.assigneeMappings.length === 0) {
+    return;
+  }
+  if (local.status === 'done' && remote.status === 'done') {
+    return;
+  }
+
+  const decision = decideAssigneeReconcile({
+    localAssignee: local.assignee,
+    remoteAssigneeId: remote.assigneeAccountId,
+    mappings: ctx.assigneeMappings,
+  });
+
+  if (decision.action === 'none') {
+    return;
+  }
+
+  try {
+    if (decision.action === 'set-local') {
+      local.assignee = decision.obsidianValue;
+      local.dirty = true;
+      markRootDirty(local);
+      counts.assigneeReconciliations += 1;
+      actions.push({
+        kind: 'reconcile-assignee',
+        title: local.title,
+        issueKey: remote.key,
+        detail: decision.detail,
+      });
+      return;
+    }
+
+    if (!dryRun) {
+      await client.updateIssue(remote.key, {
+        assignee: toJiraAssigneePayload(decision.mapping),
+      });
+    }
+    remote.assigneeAccountId = decision.mapping.jiraAccountId;
+    remote.assigneeDisplayName = decision.mapping.jiraDisplayName;
+    counts.assigneeReconciliations += 1;
+    actions.push({
+      kind: 'reconcile-assignee',
+      title: local.title,
+      issueKey: remote.key,
+      detail: decision.detail,
+    });
+  } catch (error) {
+    errors.push(`Assignee ${remote.key}: ${errorMessage(error)}`);
+  }
+}
+
 async function runLabelReconcile(
   client: JiraClient,
   remote: RemoteIssueView,
@@ -1042,6 +1201,7 @@ async function loadMappingContext(
   boardId: number,
   dateFields: DateFieldConfig,
   filterLabels: readonly string[] = [],
+  assigneeMappings: readonly AssigneeMapping[] | undefined = [],
 ): Promise<MappingContext> {
   const [board, config] = await Promise.all([
     client.getBoard(boardId),
@@ -1062,6 +1222,7 @@ async function loadMappingContext(
     'project',
     'parent',
     'labels',
+    'assignee',
     'updated',
     'created',
     ...dateIssueFieldIds(normalizedDateFields),
@@ -1072,6 +1233,7 @@ async function loadMappingContext(
     dateFields: normalizedDateFields,
     issueFields: [...new Set(issueFields)],
     filterLabels: normalizeMappingLabels(filterLabels),
+    assigneeMappings: normalizeAssigneeMappings(assigneeMappings),
   };
 }
 
@@ -1088,6 +1250,7 @@ async function createRemoteIssue(
   const startFields = includeStartField
     ? buildStartCustomFields(ctx.dateFields.startDateFieldId ?? '', local.startDate)
     : undefined;
+  const assigneeMapping = findMappingByObsidianValue(ctx.assigneeMappings, local.assignee);
 
   const created = await client.createIssue({
     projectKey: ctx.projectKey,
@@ -1097,6 +1260,7 @@ async function createRemoteIssue(
     issueTypeName: parentIssueKey ? 'Sub-task' : undefined,
     labels: labels.length > 0 ? labels : undefined,
     duedate: targetWrite.duedate,
+    assignee: assigneeMapping ? toJiraAssigneePayload(assigneeMapping) : undefined,
     customFields: mergeCustomFields(targetWrite.customFields, startFields),
   });
 
@@ -1162,6 +1326,8 @@ function fakeCreatedIssue(
     dueDateSource: local.dueDate ? 'target-end' : null,
     jiraStartDate: local.startDate,
     startDateDerivedDetail: null,
+    assigneeAccountId: null,
+    assigneeDisplayName: null,
     updated,
     projectKey,
     isSubtask: local.parent?.issueKey !== null && local.parent?.issueKey !== undefined,
@@ -1288,6 +1454,7 @@ function fromParsed(node: ParsedTaskNode, parent: MutableTask | null): MutableTa
     issueKey: node.issueKey ? node.issueKey.toUpperCase() : null,
     startDate: node.startDate,
     dueDate: node.dueDate,
+    assignee: node.assignee,
     children: [],
     parent,
     isNew: false,
@@ -1310,6 +1477,7 @@ function createLocalNode(remote: RemoteIssueView): MutableTask {
     issueKey: remote.key,
     startDate: remote.startDate,
     dueDate: remote.dueDate,
+    assignee: null,
     children: [],
     parent: null,
     isNew: true,
@@ -1346,6 +1514,7 @@ function toRenderable(task: MutableTask): RenderableTask {
     issueKey: task.issueKey,
     startDate: task.startDate,
     dueDate: task.dueDate,
+    assignee: task.assignee,
     descriptionLines: task.descriptionLines,
     children: task.children.map(toRenderable),
   };
@@ -1425,6 +1594,7 @@ function emptyCounts(): MappingSyncCounts {
     unresolvedRemovals: 0,
     recoveredPendingLinks: 0,
     labelReconciliations: 0,
+    assigneeReconciliations: 0,
   };
 }
 
@@ -1439,6 +1609,7 @@ function addCounts(a: MappingSyncCounts, b: MappingSyncCounts): MappingSyncCount
     unresolvedRemovals: a.unresolvedRemovals + b.unresolvedRemovals,
     recoveredPendingLinks: a.recoveredPendingLinks + b.recoveredPendingLinks,
     labelReconciliations: a.labelReconciliations + b.labelReconciliations,
+    assigneeReconciliations: a.assigneeReconciliations + b.assigneeReconciliations,
   };
 }
 
@@ -1467,6 +1638,7 @@ function summarizeRun(
     countKind(actions, 'unresolved-missing-local');
   const recovered = countKind(actions, 'recovered-pending');
   const labelFixes = countKind(actions, 'reconcile-labels');
+  const assigneeFixes = countKind(actions, 'reconcile-assignee');
   const derivedStarts = countKind(actions, 'derive-start');
 
   if (createRemote > 0) {
@@ -1502,6 +1674,13 @@ function summarizeRun(
       dryRun
         ? `${labelFixes} would reconcile labels`
         : `${labelFixes} label reconciliation${labelFixes === 1 ? '' : 's'}`,
+    );
+  }
+  if (assigneeFixes > 0) {
+    parts.push(
+      dryRun
+        ? `${assigneeFixes} would sync assignee`
+        : `${assigneeFixes} assignee sync${assigneeFixes === 1 ? '' : 's'}`,
     );
   }
   if (derivedStarts > 0) {
