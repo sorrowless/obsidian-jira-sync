@@ -82,6 +82,7 @@ Rules:
 | `🛫` | Start | `startDateFieldId` when set; else derived as Actual end − time spent when both exist (then written into Start) |
 | `📅` | Due | Actual end (`actualEndFieldId`) if set, else Target end (`targetEndFieldId`, default `duedate`). Obsidian → Target end only |
 | `[assignee:: value]` | Assignee | Dataview field ↔ Jira `assignee` via `assigneeMappings` |
+| `[timespent:: seconds]` | Time spent | Pull-only from `timeSpentFieldId` (default `timetracking.timeSpentSeconds`) |
 
 Accepted note values: `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` (local time). Due/target writes to Jira use the date portion only. Date-only Actual end is treated as end of that local day before subtracting time spent.
 
@@ -93,6 +94,13 @@ Accepted note values: `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` (local time). Due/targe
 4. Mapped local + empty remote → set Jira assignee.
 5. Both set and differ → Obsidian wins (update Jira when local value is mapped).
 6. Unmapped identities → no-op for that direction.
+
+### Time spent sync
+
+1. Source field from settings (`timeSpentFieldId`, default `timetracking`).
+2. Skip when both local and remote status are `done`.
+3. If Jira has time spent and Obsidian is empty or differs → set `[timespent:: N]` in the note.
+4. Never push Obsidian → Jira (worklog limitation).
 
 ## Done / workflow status
 

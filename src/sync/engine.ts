@@ -28,6 +28,11 @@ import {
   mergeMappingLabels,
   normalizeMappingLabels,
 } from './label-filter';
+import {
+  DEFAULT_TIME_SPENT_FIELD_ID,
+  decideTimeSpentReconcile,
+  timeSpentIssueFieldIds,
+} from './timespent';
 import { reconcileStatusLabels, desiredStatusLabel } from './labels';
 import {
   cloneLedger,
@@ -86,6 +91,8 @@ export interface SyncEngineOptions {
   targetEndFieldId?: string;
   /** Jira ↔ Obsidian Dataview assignee mappings. */
   assigneeMappings?: AssigneeMapping[];
+  /** Jira field for pull-only `[timespent:: seconds]` (default `timetracking`). */
+  timeSpentFieldId?: string;
   readNote: (path: string) => Promise<string>;
   writeNote: (path: string, content: string) => Promise<void>;
   /** When true, list remotes but do not mutate Jira, notes, or the real ledger. */
@@ -104,6 +111,7 @@ export interface MappingSyncCounts {
   recoveredPendingLinks: number;
   labelReconciliations: number;
   assigneeReconciliations: number;
+  timeSpentReconciliations: number;
 }
 
 export interface MappingSyncResult {
@@ -143,6 +151,7 @@ interface MutableTask {
   startDate: string | null;
   dueDate: string | null;
   assignee: string | null;
+  timeSpentSeconds: number | null;
   children: MutableTask[];
   parent: MutableTask | null;
   isNew: boolean;
@@ -157,6 +166,7 @@ interface MappingContext {
   /** Normalized OR-filter labels for this mapping (empty = all issues). */
   filterLabels: string[];
   assigneeMappings: AssigneeMapping[];
+  timeSpentFieldId: string;
 }
 
 let fakeIssueCounter = 0;
@@ -288,6 +298,7 @@ export async function syncOneMapping(
       },
       filterLabels,
       options.assigneeMappings,
+      options.timeSpentFieldId,
     );
   } catch (error) {
     return {
@@ -318,7 +329,10 @@ export async function syncOneMapping(
         ctx.issueFields,
         syncFilter,
       );
-      remoteMap = indexRemoteIssues(fetched, ctx.columns, ctx.dateFields);
+      remoteMap = indexRemoteIssues(fetched, ctx.columns, {
+        dateFields: ctx.dateFields,
+        timeSpentFieldId: ctx.timeSpentFieldId,
+      });
     } catch (error) {
       errors.push(errorMessage(error));
     }
@@ -414,7 +428,10 @@ export async function syncOneMapping(
         if (!dryRun && targetColumn) {
           await transitionToColumn(options.client, created.key, targetColumn, false);
           const refreshed = await options.client.getIssue(created.key, ctx.issueFields);
-          const view = toRemoteIssueView(refreshed, ctx.columns, ctx.dateFields);
+          const view = toRemoteIssueView(refreshed, ctx.columns, {
+            dateFields: ctx.dateFields,
+            timeSpentFieldId: ctx.timeSpentFieldId,
+          });
           Object.assign(created, view);
         }
 
@@ -443,6 +460,7 @@ export async function syncOneMapping(
           actions,
           errors,
         );
+        runTimeSpentReconcile(local, created, counts, actions);
 
         writeLedgerFromRemote(workingLedger, key, created, now);
 
@@ -524,6 +542,7 @@ export async function syncOneMapping(
           actions,
           errors,
         );
+        runTimeSpentReconcile(local, remote, counts, actions);
       } else if (options.conflictPolicy === 'prefer-obsidian') {
         await pushLocal(
           options,
@@ -576,6 +595,7 @@ export async function syncOneMapping(
           actions,
           errors,
         );
+        runTimeSpentReconcile(local, remote, counts, actions);
       }
       continue;
     }
@@ -613,6 +633,7 @@ export async function syncOneMapping(
         actions,
         errors,
       );
+      runTimeSpentReconcile(local, remote, counts, actions);
       continue;
     }
 
@@ -671,6 +692,7 @@ export async function syncOneMapping(
         actions,
         errors,
       );
+      runTimeSpentReconcile(local, remote, counts, actions);
       continue;
     }
 
@@ -726,6 +748,7 @@ export async function syncOneMapping(
         actions,
         errors,
       );
+      runTimeSpentReconcile(local, remote, counts, actions);
     }
   }
 
@@ -798,6 +821,7 @@ export async function syncOneMapping(
       actions,
       errors,
     );
+    runTimeSpentReconcile(created, remote, counts, actions);
     counts.createdLocal += 1;
     const importDetails = ['exists in Jira and was never synced to this note'];
     if (remote.startDateSource === 'derived' && remote.startDateDerivedDetail) {
@@ -956,6 +980,7 @@ async function pushLocal(
       actions,
       errors,
     );
+    runTimeSpentReconcile(local, labelRemote, counts, actions);
 
     writeLedgerFromLocal(
       ledger,
@@ -1145,6 +1170,38 @@ async function runAssigneeReconcile(
   }
 }
 
+/**
+ * Pull-only: Dataview `[timespent:: seconds]` ← Jira time spent for open tasks.
+ * Skipped when both sides are done. Never writes back to Jira.
+ */
+function runTimeSpentReconcile(
+  local: MutableTask,
+  remote: RemoteIssueView,
+  counts: MappingSyncCounts,
+  actions: SyncActionDetail[],
+): void {
+  if (local.status === 'done' && remote.status === 'done') {
+    return;
+  }
+  const decision = decideTimeSpentReconcile({
+    localSeconds: local.timeSpentSeconds,
+    remoteSeconds: remote.timeSpentSeconds,
+  });
+  if (decision.action === 'none') {
+    return;
+  }
+  local.timeSpentSeconds = decision.seconds;
+  local.dirty = true;
+  markRootDirty(local);
+  counts.timeSpentReconciliations += 1;
+  actions.push({
+    kind: 'reconcile-timespent',
+    title: local.title,
+    issueKey: remote.key,
+    detail: decision.detail,
+  });
+}
+
 async function runLabelReconcile(
   client: JiraClient,
   remote: RemoteIssueView,
@@ -1202,6 +1259,7 @@ async function loadMappingContext(
   dateFields: DateFieldConfig,
   filterLabels: readonly string[] = [],
   assigneeMappings: readonly AssigneeMapping[] | undefined = [],
+  timeSpentFieldId: string | undefined = DEFAULT_TIME_SPENT_FIELD_ID,
 ): Promise<MappingContext> {
   const [board, config] = await Promise.all([
     client.getBoard(boardId),
@@ -1214,6 +1272,8 @@ async function loadMappingContext(
     actualEndFieldId: dateFields.actualEndFieldId?.trim() || undefined,
     targetEndFieldId: dateFields.targetEndFieldId?.trim() || 'duedate',
   };
+  const normalizedTimeSpent =
+    timeSpentFieldId?.trim() || DEFAULT_TIME_SPENT_FIELD_ID;
   const issueFields = [
     'summary',
     'description',
@@ -1226,6 +1286,7 @@ async function loadMappingContext(
     'updated',
     'created',
     ...dateIssueFieldIds(normalizedDateFields),
+    ...timeSpentIssueFieldIds(normalizedTimeSpent),
   ];
   return {
     columns,
@@ -1234,6 +1295,7 @@ async function loadMappingContext(
     issueFields: [...new Set(issueFields)],
     filterLabels: normalizeMappingLabels(filterLabels),
     assigneeMappings: normalizeAssigneeMappings(assigneeMappings),
+    timeSpentFieldId: normalizedTimeSpent,
   };
 }
 
@@ -1264,7 +1326,10 @@ async function createRemoteIssue(
     customFields: mergeCustomFields(targetWrite.customFields, startFields),
   });
 
-  return toRemoteIssueView(created, ctx.columns, ctx.dateFields);
+  return toRemoteIssueView(created, ctx.columns, {
+    dateFields: ctx.dateFields,
+    timeSpentFieldId: ctx.timeSpentFieldId,
+  });
 }
 
 async function transitionToColumn(
@@ -1328,6 +1393,7 @@ function fakeCreatedIssue(
     startDateDerivedDetail: null,
     assigneeAccountId: null,
     assigneeDisplayName: null,
+    timeSpentSeconds: local.timeSpentSeconds,
     updated,
     projectKey,
     isSubtask: local.parent?.issueKey !== null && local.parent?.issueKey !== undefined,
@@ -1455,6 +1521,7 @@ function fromParsed(node: ParsedTaskNode, parent: MutableTask | null): MutableTa
     startDate: node.startDate,
     dueDate: node.dueDate,
     assignee: node.assignee,
+    timeSpentSeconds: node.timeSpentSeconds,
     children: [],
     parent,
     isNew: false,
@@ -1478,6 +1545,7 @@ function createLocalNode(remote: RemoteIssueView): MutableTask {
     startDate: remote.startDate,
     dueDate: remote.dueDate,
     assignee: null,
+    timeSpentSeconds: null,
     children: [],
     parent: null,
     isNew: true,
@@ -1515,6 +1583,7 @@ function toRenderable(task: MutableTask): RenderableTask {
     startDate: task.startDate,
     dueDate: task.dueDate,
     assignee: task.assignee,
+    timeSpentSeconds: task.timeSpentSeconds,
     descriptionLines: task.descriptionLines,
     children: task.children.map(toRenderable),
   };
@@ -1595,6 +1664,7 @@ function emptyCounts(): MappingSyncCounts {
     recoveredPendingLinks: 0,
     labelReconciliations: 0,
     assigneeReconciliations: 0,
+    timeSpentReconciliations: 0,
   };
 }
 
@@ -1610,6 +1680,7 @@ function addCounts(a: MappingSyncCounts, b: MappingSyncCounts): MappingSyncCount
     recoveredPendingLinks: a.recoveredPendingLinks + b.recoveredPendingLinks,
     labelReconciliations: a.labelReconciliations + b.labelReconciliations,
     assigneeReconciliations: a.assigneeReconciliations + b.assigneeReconciliations,
+    timeSpentReconciliations: a.timeSpentReconciliations + b.timeSpentReconciliations,
   };
 }
 
@@ -1639,6 +1710,7 @@ function summarizeRun(
   const recovered = countKind(actions, 'recovered-pending');
   const labelFixes = countKind(actions, 'reconcile-labels');
   const assigneeFixes = countKind(actions, 'reconcile-assignee');
+  const timeSpentFixes = countKind(actions, 'reconcile-timespent');
   const derivedStarts = countKind(actions, 'derive-start');
 
   if (createRemote > 0) {
@@ -1681,6 +1753,13 @@ function summarizeRun(
       dryRun
         ? `${assigneeFixes} would sync assignee`
         : `${assigneeFixes} assignee sync${assigneeFixes === 1 ? '' : 's'}`,
+    );
+  }
+  if (timeSpentFixes > 0) {
+    parts.push(
+      dryRun
+        ? `${timeSpentFixes} would sync time spent from Jira`
+        : `${timeSpentFixes} time spent sync${timeSpentFixes === 1 ? '' : 's'} from Jira`,
     );
   }
   if (derivedStarts > 0) {

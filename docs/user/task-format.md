@@ -31,13 +31,14 @@ Start and due dates live **after** the title link (not inside the `[...]` bracke
 | `🛫` | Start | Configured custom Start date field (settings) |
 | `📅` | Due | Actual end when set, otherwise Target end (`duedate` by default). Obsidian edits write Target end only |
 | `[assignee:: …]` | Assignee | Dataview inline field; mapped to a Jira user in settings |
+| `[timespent:: …]` | Time spent | Seconds from Jira Time Tracking (pull-only; edit time in Jira) |
 
 Accepted date values: `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` (local time). After sync the plugin rewrites the line in this canonical form; the link text stays the title only. Due dates sent to Jira use the calendar date only.
 
-Example with assignee:
+Example with assignee and time spent:
 
 ```markdown
-- [ ] [Team standup](https://jira.example/browse/PROJ-42) 🛫 2026-10-02 📅 2026-10-05 [assignee:: Аряпов]
+- [ ] [Team standup](https://jira.example/browse/PROJ-42) 🛫 2026-10-02 📅 2026-10-05 [assignee:: Аряпов] [timespent:: 3600]
 ```
 
 Unlinked tasks may use the same markers:

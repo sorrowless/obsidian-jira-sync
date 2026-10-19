@@ -329,6 +329,7 @@ export default class JiraSyncPlugin extends Plugin {
           actualEndFieldId: this.settings.actualEndFieldId,
           targetEndFieldId: this.settings.targetEndFieldId,
           assigneeMappings: this.settings.assigneeMappings,
+          timeSpentFieldId: this.settings.timeSpentFieldId,
           dryRun,
           readNote: async (path) => {
             const file = resolveMarkdownFile(this.app, path);
@@ -446,6 +447,10 @@ function normalizeSettings(saved: Partial<PluginSettings>): PluginSettings {
       typeof saved.targetEndFieldId === 'string' && saved.targetEndFieldId.trim()
         ? saved.targetEndFieldId.trim()
         : 'duedate',
+    timeSpentFieldId:
+      typeof saved.timeSpentFieldId === 'string' && saved.timeSpentFieldId.trim()
+        ? saved.timeSpentFieldId.trim()
+        : 'timetracking',
     assigneeMappings: normalizeAssigneeMappings(
       Array.isArray(saved.assigneeMappings) ? saved.assigneeMappings : [],
     ),

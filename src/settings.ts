@@ -60,6 +60,11 @@ export interface PluginSettings {
    */
   targetEndFieldId: string;
   /**
+   * Jira field for time spent → Obsidian `[timespent:: seconds]` (pull-only).
+   * Default `timetracking` (reads `timeSpentSeconds`). Also supports `timespent`.
+   */
+  timeSpentFieldId: string;
+  /**
    * Jira assignee ↔ Obsidian Dataview `[assignee:: value]` mappings.
    * Only mapped users participate in assignee sync.
    */
@@ -85,6 +90,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   startDateFieldId: '',
   actualEndFieldId: '',
   targetEndFieldId: 'duedate',
+  timeSpentFieldId: 'timetracking',
   assigneeMappings: [],
   knownAssignees: [],
   mappings: [],

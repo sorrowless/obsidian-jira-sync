@@ -11,6 +11,7 @@ export type SyncActionKind =
   | 'recovered-pending'
   | 'reconcile-labels'
   | 'reconcile-assignee'
+  | 'reconcile-timespent'
   | 'derive-start';
 
 export interface SyncActionDetail {
@@ -53,6 +54,8 @@ export function formatActionLabel(kind: SyncActionKind, dryRun: boolean): string
       return `${prefix}align status labels with board column`;
     case 'reconcile-assignee':
       return `${prefix}sync assignee`;
+    case 'reconcile-timespent':
+      return `${prefix}sync time spent from Jira`;
     case 'derive-start':
       return `${prefix}set start date from actual end − time tracking`;
     default: {
@@ -74,6 +77,7 @@ export const ACTION_REPORT_ORDER: SyncActionKind[] = [
   'recovered-pending',
   'reconcile-labels',
   'reconcile-assignee',
+  'reconcile-timespent',
   'unresolved-missing-remote',
   'unresolved-missing-local',
 ];

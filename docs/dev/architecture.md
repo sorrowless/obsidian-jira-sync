@@ -53,6 +53,7 @@ Stores connection and behaviour configuration:
 | `startDateFieldId` | Optional custom field id for Start date (e.g. `customfield_10015`) |
 | `actualEndFieldId` | Optional Actual end field; wins for Obsidian due; used with time tracking to derive start |
 | `targetEndFieldId` | Target end / due field (default `duedate`); Obsidian due writes here |
+| `timeSpentFieldId` | Jira field for pull-only `[timespent:: seconds]` (default `timetracking`) |
 | `assigneeMappings` | `{ jiraAccountId, jiraDisplayName, jiraName?, obsidianValue }[]` for Dataview `[assignee:: …]` |
 | `knownAssignees` | Cached board assignees for settings dropdowns |
 | `conflictPolicy` | `prefer-obsidian` (default) or `prefer-jira` |

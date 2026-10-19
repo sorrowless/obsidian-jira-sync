@@ -1,6 +1,7 @@
 import { extractIssueKeyFromUrl } from '../jira/urls';
 import { parseAssigneeField } from './assignee';
 import { parseTaskDates } from './dates';
+import { parseTimeSpentField } from './timespent';
 import type { ParseNoteOptions, ParsedTaskNode } from './types';
 import {
   doneFlagFromStatus,
@@ -28,6 +29,7 @@ interface FlatTask {
   startDate: string | null;
   dueDate: string | null;
   assignee: string | null;
+  timeSpentSeconds: number | null;
   descriptionLines: string[];
   descriptionLineIndices: number[];
 }
@@ -72,6 +74,7 @@ export function parseNoteTasks(markdown: string, options: ParseNoteOptions): Par
         startDate: resolved.startDate,
         dueDate: resolved.dueDate,
         assignee: resolved.assignee,
+        timeSpentSeconds: resolved.timeSpentSeconds,
         descriptionLines: [],
         descriptionLineIndices: [],
       });
@@ -119,13 +122,15 @@ function resolveTaskBody(
   startDate: string | null;
   dueDate: string | null;
   assignee: string | null;
+  timeSpentSeconds: number | null;
 } {
   const linkMatch = body.match(LINK_AT_START);
   if (linkMatch) {
     const title = linkMatch[1] ?? '';
     const url = linkMatch[2] ?? '';
     const suffix = linkMatch[3] ?? '';
-    const withAssignee = parseAssigneeField(suffix);
+    const withTime = parseTimeSpentField(suffix);
+    const withAssignee = parseAssigneeField(withTime.remainder);
     const dates = parseTaskDates(withAssignee.remainder);
     return {
       title: title.trim() || dates.remainder,
@@ -133,10 +138,12 @@ function resolveTaskBody(
       startDate: dates.startDate,
       dueDate: dates.dueDate,
       assignee: withAssignee.assignee,
+      timeSpentSeconds: withTime.timeSpentSeconds,
     };
   }
 
-  const withAssignee = parseAssigneeField(body);
+  const withTime = parseTimeSpentField(body);
+  const withAssignee = parseAssigneeField(withTime.remainder);
   const dates = parseTaskDates(withAssignee.remainder);
   return {
     title: dates.remainder,
@@ -144,6 +151,7 @@ function resolveTaskBody(
     startDate: dates.startDate,
     dueDate: dates.dueDate,
     assignee: withAssignee.assignee,
+    timeSpentSeconds: withTime.timeSpentSeconds,
   };
 }
 
@@ -198,6 +206,7 @@ function buildTree(tasks: FlatTask[]): ParsedTaskNode[] {
       startDate: flat.startDate,
       dueDate: flat.dueDate,
       assignee: flat.assignee,
+      timeSpentSeconds: flat.timeSpentSeconds,
       descriptionLines: flat.descriptionLines,
       descriptionLineIndices: flat.descriptionLineIndices,
       children: [],

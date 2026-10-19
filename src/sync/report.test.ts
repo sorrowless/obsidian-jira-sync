@@ -24,6 +24,7 @@ function sampleResult(overrides?: Partial<SyncRunResult>): SyncRunResult {
           recoveredPendingLinks: 0,
           labelReconciliations: 0,
           assigneeReconciliations: 0,
+          timeSpentReconciliations: 0,
         },
         actions: [
           {

@@ -25,6 +25,14 @@ Due date resolution from Jira: **Actual end** if set, else **Target end**, else 
 
 Start resolution from Jira: Start field if set; otherwise, when Actual end and time tracking (time spent) are both present, start = Actual end − time spent. Sync then writes that value into the Start field and reports **set start date from actual end − time tracking** in the notice/report.
 
+## Time spent
+
+| Setting | Purpose |
+| --- | --- |
+| **Time spent field id** | Jira source for pull-only `[timespent:: <seconds>]`. Default `timetracking` (reads `timeSpentSeconds`). **Find** looks up “Time Tracking”, then “Time Spent” |
+
+Sync is **Jira → Obsidian only** on open tasks (skipped when both sides are done). Changes to `[timespent:: …]` in Obsidian are **not** written back to Jira because of Jira worklog limitations — edit logged time in Jira.
+
 ## Assignee mappings
 
 Map Jira users (already assigned on your boards) to Dataview inline values written as `[assignee:: …]` on checklist lines.

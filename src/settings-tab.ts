@@ -208,6 +208,51 @@ export class JiraSyncSettingTab extends PluginSettingTab {
           });
         }),
       );
+
+    containerEl.createEl('h3', { text: 'Time spent' });
+    containerEl.createEl('p', {
+      cls: 'setting-item-description',
+      text: 'Syncs Jira Time Tracking into Dataview [timespent:: <seconds>] on open tasks (Jira → Obsidian only). Changes to [timespent:: …] in Obsidian are not written back to Jira because of Jira worklog limitations — edit time in Jira.',
+    });
+
+    new Setting(containerEl)
+      .setName('Time spent field id')
+      .setDesc(
+        'Source field for pull-only sync. Default `timetracking` (uses timeSpentSeconds). Use `timespent` or a custom field id if needed.',
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder('timetracking')
+          .setValue(this.plugin.settings.timeSpentFieldId || 'timetracking')
+          .onChange(async (value) => {
+            const trimmed = value.trim();
+            this.plugin.settings.timeSpentFieldId = trimmed || 'timetracking';
+            await this.plugin.saveSettings();
+          }),
+      )
+      .addButton((button) =>
+        button.setButtonText('Find').onClick(async () => {
+          const tracking = await this.plugin.findJiraFieldByName('Time Tracking');
+          if (tracking.ok) {
+            this.plugin.settings.timeSpentFieldId = tracking.fieldId;
+            await this.plugin.saveSettings();
+            new Notice(`Jira Sync: using ${tracking.name} (${tracking.fieldId}).`);
+            this.display();
+            return;
+          }
+          const spent = await this.plugin.findJiraFieldByName('Time Spent');
+          if (spent.ok) {
+            this.plugin.settings.timeSpentFieldId = spent.fieldId;
+            await this.plugin.saveSettings();
+            new Notice(`Jira Sync: using ${spent.name} (${spent.fieldId}).`);
+            this.display();
+            return;
+          }
+          new Notice(
+            `Jira Sync: ${tracking.message} Also tried “Time Spent”: ${spent.message}`,
+          );
+        }),
+      );
   }
 
   private async findAndStoreField(

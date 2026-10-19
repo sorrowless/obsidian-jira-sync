@@ -41,4 +41,13 @@ describe('parseNoteTasks', () => {
     expect(roots[0]?.title).toBe('Parent');
     expect(roots[0]?.dueDate).toBeTruthy();
   });
+
+  it('parses Dataview timespent fields', () => {
+    const roots = parseNoteTasks(
+      '- [ ] [Parent](https://jira.example/browse/PROJ-1) [assignee:: Аряпов] [timespent:: 3600]',
+      { jiraBaseUrl: BASE },
+    );
+    expect(roots[0]?.timeSpentSeconds).toBe(3600);
+    expect(roots[0]?.assignee).toBe('Аряпов');
+  });
 });

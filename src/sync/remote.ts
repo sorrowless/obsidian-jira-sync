@@ -16,6 +16,10 @@ import {
   type BoardColumnView,
   type TaskStatus,
 } from './status';
+import {
+  DEFAULT_TIME_SPENT_FIELD_ID,
+  extractConfiguredTimeSpentSeconds,
+} from './timespent';
 
 export interface RemoteIssueView {
   key: string;
@@ -39,19 +43,26 @@ export interface RemoteIssueView {
   /** Stable Jira assignee id (accountId / name / key), or null. */
   assigneeAccountId: string | null;
   assigneeDisplayName: string | null;
+  /** Logged time spent in seconds (from configured field), or null. */
+  timeSpentSeconds: number | null;
   updated: string;
   projectKey: string;
   isSubtask: boolean;
 }
 
+export interface RemoteIssueViewOptions {
+  dateFields?: DateFieldConfig | string;
+  timeSpentFieldId?: string;
+}
+
 export function indexRemoteIssues(
   issues: readonly JiraIssue[],
   columns: ReadonlyArray<BoardColumnView>,
-  dateFields?: DateFieldConfig | string,
+  dateFieldsOrOptions?: DateFieldConfig | string | RemoteIssueViewOptions,
 ): Map<string, RemoteIssueView> {
   const map = new Map<string, RemoteIssueView>();
   for (const issue of issues) {
-    const view = toRemoteIssueView(issue, columns, dateFields);
+    const view = toRemoteIssueView(issue, columns, dateFieldsOrOptions);
     map.set(view.key, view);
   }
   return map;
@@ -60,8 +71,9 @@ export function indexRemoteIssues(
 export function toRemoteIssueView(
   issue: JiraIssue,
   columns: ReadonlyArray<BoardColumnView>,
-  dateFields?: DateFieldConfig | string,
+  dateFieldsOrOptions?: DateFieldConfig | string | RemoteIssueViewOptions,
 ): RemoteIssueView {
+  const options = normalizeRemoteOptions(dateFieldsOrOptions);
   const fields = issue.fields ?? {};
   const statusId = String(fields.status?.id ?? '');
   const statusName = fields.status?.name ?? '';
@@ -70,12 +82,12 @@ export function toRemoteIssueView(
   const columnName = column?.name ?? statusName;
   const parentKey = fields.parent?.key ? String(fields.parent.key).toUpperCase() : null;
 
-  const config: DateFieldConfig =
-    typeof dateFields === 'string'
-      ? { startDateFieldId: dateFields }
-      : (dateFields ?? {});
-  const dates = resolveIssueDates(fields as Record<string, unknown>, config);
+  const dates = resolveIssueDates(fields as Record<string, unknown>, options.dateFields);
   const assignee = fields.assignee ?? null;
+  const timeSpentSeconds = extractConfiguredTimeSpentSeconds(
+    fields as Record<string, unknown>,
+    options.timeSpentFieldId,
+  );
 
   return {
     key: String(issue.key).toUpperCase(),
@@ -95,9 +107,39 @@ export function toRemoteIssueView(
     startDateDerivedDetail: dates.startDateDerivedDetail,
     assigneeAccountId: jiraAssigneeIdentity(assignee),
     assigneeDisplayName: jiraAssigneeDisplayName(assignee) || null,
+    timeSpentSeconds,
     updated: String(fields.updated ?? ''),
     projectKey: String(fields.project?.key ?? ''),
     isSubtask: Boolean(fields.issuetype?.subtask),
+  };
+}
+
+function normalizeRemoteOptions(
+  dateFieldsOrOptions?: DateFieldConfig | string | RemoteIssueViewOptions,
+): { dateFields: DateFieldConfig; timeSpentFieldId: string } {
+  if (typeof dateFieldsOrOptions === 'string') {
+    return {
+      dateFields: { startDateFieldId: dateFieldsOrOptions },
+      timeSpentFieldId: DEFAULT_TIME_SPENT_FIELD_ID,
+    };
+  }
+  if (
+    dateFieldsOrOptions &&
+    ('dateFields' in dateFieldsOrOptions || 'timeSpentFieldId' in dateFieldsOrOptions)
+  ) {
+    const opts = dateFieldsOrOptions as RemoteIssueViewOptions;
+    const dateFields =
+      typeof opts.dateFields === 'string'
+        ? { startDateFieldId: opts.dateFields }
+        : (opts.dateFields ?? {});
+    return {
+      dateFields,
+      timeSpentFieldId: opts.timeSpentFieldId?.trim() || DEFAULT_TIME_SPENT_FIELD_ID,
+    };
+  }
+  return {
+    dateFields: (dateFieldsOrOptions as DateFieldConfig | undefined) ?? {},
+    timeSpentFieldId: DEFAULT_TIME_SPENT_FIELD_ID,
   };
 }
 

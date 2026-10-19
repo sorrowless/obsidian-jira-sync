@@ -31,6 +31,8 @@ export interface ParsedTaskNode {
   dueDate: string | null;
   /** Dataview `[assignee:: …]` value, or null when unset. */
   assignee: string | null;
+  /** Dataview `[timespent:: …]` seconds from Jira (pull-only), or null when unset. */
+  timeSpentSeconds: number | null;
   /** Indented non-checkbox bullets under this task (description). */
   descriptionLines: string[];
   /** Source line indices for descriptionLines (parallel array). */
