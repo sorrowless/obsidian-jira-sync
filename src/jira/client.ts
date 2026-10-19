@@ -592,64 +592,29 @@ export class JiraClient {
   }
 
   async createIssue(input: CreateIssueInput): Promise<JiraIssue> {
-    const fields: Record<string, unknown> = {
-      project: { key: input.projectKey },
-      summary: input.summary,
-      issuetype: { name: input.issueTypeName ?? (input.parentKey ? 'Sub-task' : 'Task') },
-    };
-    if (input.description !== undefined) {
-      fields.description = this.encodeDescription(input.description);
+    // Prefer classic `/api/2` + plain description: Obsidian `requestUrl` POSTs to
+    // Cloud `/api/3` frequently fail with "XSRF check failed" even when
+    // `X-Atlassian-Token: no-check` is set (browser-like session/UA).
+    try {
+      return await this.createIssueAt(apiV2Root(this.baseUrl), input, false);
+    } catch (error) {
+      if (this.useAdfDescription && shouldRetryIssueWriteWithAdf(error)) {
+        return this.createIssueAt(apiV3Root(this.baseUrl), input, true);
+      }
+      throw error;
     }
-    if (input.parentKey) {
-      fields.parent = { key: input.parentKey };
-    }
-    if (input.labels) {
-      fields.labels = input.labels;
-    }
-    if (input.duedate !== undefined) {
-      fields.duedate = input.duedate;
-    }
-    if (input.assignee !== undefined) {
-      fields.assignee = input.assignee;
-    }
-    if (input.customFields) {
-      Object.assign(fields, input.customFields);
-    }
-
-    const created = await this.requestJson<{ id: string; key: string }>(
-      'POST',
-      `${this.issueWriteRoot()}/issue`,
-      { fields },
-    );
-    return this.getIssue(created.key);
   }
 
   async updateIssue(issueKey: string, input: UpdateIssueInput): Promise<void> {
-    const fields: Record<string, unknown> = {};
-    if (input.summary !== undefined) {
-      fields.summary = input.summary;
+    try {
+      await this.updateIssueAt(apiV2Root(this.baseUrl), issueKey, input, false);
+    } catch (error) {
+      if (this.useAdfDescription && shouldRetryIssueWriteWithAdf(error)) {
+        await this.updateIssueAt(apiV3Root(this.baseUrl), issueKey, input, true);
+        return;
+      }
+      throw error;
     }
-    if (input.description !== undefined) {
-      fields.description = this.encodeDescription(input.description);
-    }
-    if (input.labels !== undefined) {
-      fields.labels = input.labels;
-    }
-    if (input.duedate !== undefined) {
-      fields.duedate = input.duedate;
-    }
-    if (input.assignee !== undefined) {
-      fields.assignee = input.assignee;
-    }
-    if (input.parentKey !== undefined) {
-      fields.parent = input.parentKey ? { key: input.parentKey } : null;
-    }
-    if (input.customFields) {
-      Object.assign(fields, input.customFields);
-    }
-    await this.requestJson('PUT', `${this.issueWriteRoot()}/issue/${encodeURIComponent(issueKey)}`, {
-      fields,
-    });
   }
 
   async listTransitions(issueKey: string): Promise<JiraTransition[]> {
@@ -693,15 +658,81 @@ export class JiraClient {
     return `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
   }
 
-  private issueWriteRoot(): string {
-    return this.useAdfDescription ? apiV3Root(this.baseUrl) : apiV2Root(this.baseUrl);
-  }
-
-  private encodeDescription(text: string): unknown {
-    if (this.useAdfDescription) {
+  private encodeDescription(text: string, asAdf: boolean): unknown {
+    if (asAdf) {
       return plainTextToAdf(text);
     }
     return text;
+  }
+
+  private async createIssueAt(
+    apiRoot: string,
+    input: CreateIssueInput,
+    asAdf: boolean,
+  ): Promise<JiraIssue> {
+    const fields: Record<string, unknown> = {
+      project: { key: input.projectKey },
+      summary: input.summary,
+      issuetype: { name: input.issueTypeName ?? (input.parentKey ? 'Sub-task' : 'Task') },
+    };
+    if (input.description !== undefined) {
+      fields.description = this.encodeDescription(input.description, asAdf);
+    }
+    if (input.parentKey) {
+      fields.parent = { key: input.parentKey };
+    }
+    if (input.labels) {
+      fields.labels = input.labels;
+    }
+    if (input.duedate !== undefined) {
+      fields.duedate = input.duedate;
+    }
+    if (input.assignee !== undefined) {
+      fields.assignee = input.assignee;
+    }
+    if (input.customFields) {
+      Object.assign(fields, input.customFields);
+    }
+
+    const created = await this.requestJson<{ id: string; key: string }>(
+      'POST',
+      `${apiRoot}/issue`,
+      { fields },
+    );
+    return this.getIssue(created.key);
+  }
+
+  private async updateIssueAt(
+    apiRoot: string,
+    issueKey: string,
+    input: UpdateIssueInput,
+    asAdf: boolean,
+  ): Promise<void> {
+    const fields: Record<string, unknown> = {};
+    if (input.summary !== undefined) {
+      fields.summary = input.summary;
+    }
+    if (input.description !== undefined) {
+      fields.description = this.encodeDescription(input.description, asAdf);
+    }
+    if (input.labels !== undefined) {
+      fields.labels = input.labels;
+    }
+    if (input.duedate !== undefined) {
+      fields.duedate = input.duedate;
+    }
+    if (input.assignee !== undefined) {
+      fields.assignee = input.assignee;
+    }
+    if (input.parentKey !== undefined) {
+      fields.parent = input.parentKey ? { key: input.parentKey } : null;
+    }
+    if (input.customFields) {
+      Object.assign(fields, input.customFields);
+    }
+    await this.requestJson('PUT', `${apiRoot}/issue/${encodeURIComponent(issueKey)}`, {
+      fields,
+    });
   }
 
   private normalizeIssue(issue: JiraIssue): JiraIssue {
@@ -733,11 +764,16 @@ export class JiraClient {
     url: string,
     body?: unknown,
   ): Promise<T> {
+    // Obsidian `requestUrl` otherwise sends a Chromium User-Agent. Jira then
+    // runs "additional XSRF checks" that ignore `X-Atlassian-Token: no-check`
+    // unless Origin/Referer match the Jira host (or the UA is non-browser).
+    // See: https://support.atlassian.com/jira/kb/rest-api-calls-with-a-browser-user-agent-header-may-fail-csrf-checks/
     const headers: Record<string, string> = {
       Authorization: this.authHeader(),
       Accept: 'application/json',
-      // Required for many Jira Server/DC (and some Cloud) mutating calls when
-      // the request is not a browser form post with an atl.xsrf.token cookie.
+      'User-Agent': 'obsidian-jira-sync',
+      Origin: this.baseUrl,
+      Referer: `${this.baseUrl}/`,
       'X-Atlassian-Token': 'no-check',
     };
     let payload: string | undefined;
@@ -791,6 +827,23 @@ function isXsrfError(error: unknown): boolean {
   }
   const message = `${error.message} ${error.body ?? ''}`.toLowerCase();
   return message.includes('xsrf');
+}
+
+/** Cloud sometimes rejects plain-string description on `/api/2` — retry ADF on `/api/3`. */
+function shouldRetryIssueWriteWithAdf(error: unknown): boolean {
+  if (!(error instanceof JiraApiError)) {
+    return false;
+  }
+  if (isXsrfError(error)) {
+    return false;
+  }
+  const message = `${error.message} ${error.body ?? ''}`.toLowerCase();
+  return (
+    message.includes('description') ||
+    message.includes('adf') ||
+    message.includes('document') ||
+    message.includes('operation value must be an atlassian document')
+  );
 }
 
 function createLabelCollector(): {

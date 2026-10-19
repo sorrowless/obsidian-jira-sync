@@ -35,6 +35,9 @@ describe('JiraClient', () => {
     const call = vi.mocked(transport).mock.calls[0]?.[0];
     expect(call?.headers.Authorization).toBe(encodeBasic('user@example.com', 'secret-token'));
     expect(call?.headers['X-Atlassian-Token']).toBe('no-check');
+    expect(call?.headers['User-Agent']).toBe('obsidian-jira-sync');
+    expect(call?.headers.Origin).toBe('https://example.atlassian.net');
+    expect(call?.headers.Referer).toBe('https://example.atlassian.net/');
   });
 
   it('sends Bearer auth for self-hosted PAT', async () => {
@@ -105,6 +108,8 @@ describe('JiraClient', () => {
       if (request.method === 'POST' && request.url.endsWith('/rest/api/2/issue')) {
         expect(request.body).toContain('"summary":"New task"');
         expect(request.body).toContain('"project":{"key":"PROJ"}');
+        expect(request.headers['X-Atlassian-Token']).toBe('no-check');
+        expect(request.headers['User-Agent']).toBe('obsidian-jira-sync');
         return {
           status: 201,
           headers: {},
@@ -146,6 +151,59 @@ describe('JiraClient', () => {
     expect(created.key).toBe('PROJ-9');
     expect(created.fields.summary).toBe('New task');
     expect(created.fields.description).toBe('Details');
+  });
+
+  it('createIssue prefers /api/2 even on Cloud to avoid XSRF on /api/3', async () => {
+    const baseUrl = 'https://example.atlassian.net';
+    const urls: string[] = [];
+    const transport = mockTransport((request) => {
+      urls.push(`${request.method} ${request.url}`);
+      if (request.method === 'POST' && request.url.endsWith('/rest/api/2/issue')) {
+        expect(request.body).toContain('"description":"Details"');
+        expect(request.body).not.toContain('"type":"doc"');
+        return {
+          status: 201,
+          headers: {},
+          text: JSON.stringify({ id: '100', key: 'PROJ-9' }),
+        };
+      }
+      if (request.method === 'GET' && request.url.includes('/issue/PROJ-9')) {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            id: '100',
+            key: 'PROJ-9',
+            fields: {
+              summary: 'New task',
+              description: 'Details',
+              status: { id: '1', name: 'To Do' },
+              project: { key: 'PROJ' },
+            },
+          }),
+        };
+      }
+      return { status: 500, headers: {}, text: 'unexpected ' + request.url };
+    });
+
+    const client = new JiraClient({
+      baseUrl,
+      authMode: 'cloud',
+      email: 'user@example.com',
+      token: 'token',
+      transport,
+      useAdfDescription: true,
+    });
+
+    const created = await client.createIssue({
+      projectKey: 'PROJ',
+      summary: 'New task',
+      description: 'Details',
+    });
+    expect(created.key).toBe('PROJ-9');
+    expect(urls.some((url) => url.includes('POST') && url.includes('/rest/api/3/issue'))).toBe(
+      false,
+    );
   });
 
   it('parses Jira error payloads into JiraApiError messages', async () => {
