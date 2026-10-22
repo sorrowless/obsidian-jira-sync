@@ -153,6 +153,177 @@ describe('JiraClient', () => {
     expect(created.fields.description).toBe('Details');
   });
 
+  it('linkChildBlocksParent POSTs Blocks link (child blocks parent)', async () => {
+    const baseUrl = 'https://jira.example';
+    let linked = false;
+    const transport = mockTransport((request) => {
+      if (request.method === 'GET' && request.url.includes('/issueLinkType')) {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            issueLinkTypes: [
+              {
+                id: '10000',
+                name: 'Blocks',
+                inward: 'is blocked by',
+                outward: 'blocks',
+              },
+            ],
+          }),
+        };
+      }
+      if (request.method === 'GET' && request.url.includes('/issue/PROJ-2')) {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            id: '2',
+            key: 'PROJ-2',
+            fields: {
+              issuelinks: linked
+                ? [
+                    {
+                      id: '55',
+                      type: {
+                        id: '10000',
+                        name: 'Blocks',
+                        inward: 'is blocked by',
+                        outward: 'blocks',
+                      },
+                      outwardIssue: { key: 'PROJ-1' },
+                    },
+                  ]
+                : [],
+            },
+          }),
+        };
+      }
+      if (request.method === 'GET' && request.url.includes('/issue/PROJ-1')) {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            id: '1',
+            key: 'PROJ-1',
+            fields: { issuelinks: [] },
+          }),
+        };
+      }
+      if (request.method === 'POST' && request.url.endsWith('/rest/api/2/issueLink')) {
+        expect(JSON.parse(request.body ?? '{}')).toEqual({
+          type: { id: '10000' },
+          outwardIssue: { key: 'PROJ-2' },
+          inwardIssue: { key: 'PROJ-1' },
+        });
+        linked = true;
+        return { status: 201, headers: {}, text: '' };
+      }
+      return { status: 404, headers: {}, text: 'not found' };
+    });
+
+    const client = new JiraClient({
+      baseUrl,
+      authMode: 'pat',
+      token: 'pat',
+      transport,
+    });
+    await client.linkChildBlocksParent('PROJ-2', 'PROJ-1');
+  });
+
+  it('linkChildBlocksParent flips ends when first guess is reversed on the site', async () => {
+    const baseUrl = 'https://jira.example';
+    const posts: unknown[] = [];
+    let phase: 'empty' | 'wrong' | 'right' = 'empty';
+    const transport = mockTransport((request) => {
+      if (request.method === 'GET' && request.url.includes('/issueLinkType')) {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            issueLinkTypes: [
+              {
+                id: '10000',
+                name: 'Blocks',
+                // Site config looks standard, but verify will see reversed until flip.
+                inward: 'is blocked by',
+                outward: 'blocks',
+              },
+            ],
+          }),
+        };
+      }
+      if (request.method === 'GET' && request.url.includes('/issue/PROJ-2')) {
+        const links =
+          phase === 'empty'
+            ? []
+            : phase === 'wrong'
+              ? [
+                  {
+                    id: '1',
+                    type: {
+                      id: '10000',
+                      name: 'Blocks',
+                      inward: 'is blocked by',
+                      outward: 'blocks',
+                    },
+                    // Wrong: child appears blocked by parent.
+                    inwardIssue: { key: 'PROJ-1' },
+                  },
+                ]
+              : [
+                  {
+                    id: '2',
+                    type: {
+                      id: '10000',
+                      name: 'Blocks',
+                      inward: 'is blocked by',
+                      outward: 'blocks',
+                    },
+                    outwardIssue: { key: 'PROJ-1' },
+                  },
+                ];
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({ id: '2', key: 'PROJ-2', fields: { issuelinks: links } }),
+        };
+      }
+      if (request.method === 'GET' && request.url.includes('/issue/PROJ-1')) {
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({ id: '1', key: 'PROJ-1', fields: { issuelinks: [] } }),
+        };
+      }
+      if (request.method === 'DELETE' && request.url.includes('/issueLink/')) {
+        phase = 'empty';
+        return { status: 204, headers: {}, text: '' };
+      }
+      if (request.method === 'POST' && request.url.endsWith('/rest/api/2/issueLink')) {
+        const body = JSON.parse(request.body ?? '{}');
+        posts.push(body);
+        phase = posts.length === 1 ? 'wrong' : 'right';
+        return { status: 201, headers: {}, text: '' };
+      }
+      return { status: 404, headers: {}, text: 'not found' };
+    });
+
+    const client = new JiraClient({
+      baseUrl,
+      authMode: 'pat',
+      token: 'pat',
+      transport,
+    });
+    await client.linkChildBlocksParent('PROJ-2', 'PROJ-1');
+    expect(posts).toHaveLength(2);
+    expect(posts[1]).toEqual({
+      type: { id: '10000' },
+      outwardIssue: { key: 'PROJ-1' },
+      inwardIssue: { key: 'PROJ-2' },
+    });
+  });
+
   it('createIssue prefers /api/2 even on Cloud to avoid XSRF on /api/3', async () => {
     const baseUrl = 'https://example.atlassian.net';
     const urls: string[] = [];

@@ -9,7 +9,7 @@ Synced fields:
 - Title (Jira `summary`)
 - Description (plain text ↔ indented bullets)
 - Coarse workflow status via checkbox + board column + status labels
-- Parent / child nesting (Jira sub-tasks)
+- Parent / child nesting (Jira Blocks links: child blocks parent)
 - Jira browse URL in the Obsidian task line
 - Start date (`🛫` ↔ configured custom field)
 - Due date (`📅` ← Actual end or Target end; → Target end only)
@@ -152,8 +152,9 @@ Unlinked checklist items create issues only in unambiguous columns: To Do, In Pr
 ## Nesting
 
 - Indentation of checklist items defines parent/child trees in the note.
-- Nested checklist items become Jira sub-tasks (`parent` = parent issue key) in the same project.
-- Changing indentation of an already-linked task updates the Jira parent when the API allows.
+- Nested checklist items become normal Jira issues linked with **Blocks** (child blocks parent) in the same project.
+- Changing indentation of an already-linked task adds/removes that Blocks link; unrelated Blocks links are untouched.
+- On pull, Blocks → Obsidian indent only when both issues are in the mapping sync set/same project and the blocker has no hierarchy `parent`.
 - Description bullets must not be treated as children.
 
 ## Classification
@@ -170,7 +171,7 @@ Condition: local checklist item has no Jira link **and** is not already represen
 
 Action:
 
-1. Create a Jira issue with summary = local title, description = joined description bullets, parent if nested, due/start when set, initial status from checkbox.
+1. Create a Jira issue with summary = local title, description = joined description bullets, due/start when set, initial status from checkbox; if nested, add a Blocks link (child blocks parent).
 2. Rewrite the Obsidian line to the canonical linked form.
 3. Attach the status label for the target column.
 4. Write a ledger entry.
@@ -270,7 +271,7 @@ Note:
     - [ ] Child idea
 ```
 
-After sync, child becomes a Jira sub-task of `PROJ-1`, and the note becomes:
+After sync, child is a normal Jira issue that **blocks** `PROJ-1`, and the note becomes:
 
 ```markdown
 - [ ] [Parent](https://jira.example/browse/PROJ-1)

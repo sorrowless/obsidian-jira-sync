@@ -50,6 +50,20 @@ export interface JiraAssigneeRef {
   active?: boolean;
 }
 
+export interface JiraIssueLinkType {
+  id: string;
+  name: string;
+  inward: string;
+  outward: string;
+}
+
+export interface JiraIssueLink {
+  id?: string;
+  type?: JiraIssueLinkType;
+  inwardIssue?: { key?: string; id?: string };
+  outwardIssue?: { key?: string; id?: string };
+}
+
 export interface JiraIssueFields {
   summary?: string;
   description?: unknown;
@@ -57,6 +71,7 @@ export interface JiraIssueFields {
   issuetype?: JiraIssueType;
   project?: JiraProjectRef;
   parent?: { key?: string; id?: string };
+  issuelinks?: JiraIssueLink[];
   labels?: string[];
   assignee?: JiraAssigneeRef | null;
   duedate?: string | null;

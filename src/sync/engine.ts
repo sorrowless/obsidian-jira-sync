@@ -329,10 +329,15 @@ export async function syncOneMapping(
         ctx.issueFields,
         syncFilter,
       );
-      remoteMap = indexRemoteIssues(fetched, ctx.columns, {
+      const indexed = indexRemoteIssues(fetched, ctx.columns, {
         dateFields: ctx.dateFields,
         timeSpentFieldId: ctx.timeSpentFieldId,
+        mappingProjectKey: ctx.projectKey,
       });
+      remoteMap = indexed.remoteMap;
+      for (const cycleError of indexed.cycleErrors) {
+        errors.push(cycleError);
+      }
     } catch (error) {
       errors.push(errorMessage(error));
     }
@@ -926,9 +931,18 @@ async function pushLocal(
         summary: local.title,
         description: descriptionFromLines(local.descriptionLines),
         duedate: targetWrite.duedate,
-        parentKey: parentIssueKey,
         customFields: mergeCustomFields(targetWrite.customFields, startFields),
       });
+      const wantedParent = parentIssueKey?.toUpperCase() ?? null;
+      const remoteParent = remote.parentIssueKey?.toUpperCase() ?? null;
+      if (wantedParent && wantedParent !== remoteParent) {
+        if (remoteParent) {
+          await options.client.unlinkChildBlocksParent(remote.key, remoteParent);
+        }
+        await options.client.linkChildBlocksParent(remote.key, wantedParent);
+      } else if (!wantedParent && remoteParent) {
+        await options.client.unlinkChildBlocksParent(remote.key, remoteParent);
+      }
     }
 
     let columnName = remote.columnName;
@@ -1281,6 +1295,7 @@ async function loadMappingContext(
     'issuetype',
     'project',
     'parent',
+    'issuelinks',
     'labels',
     'assignee',
     'updated',
@@ -1314,22 +1329,28 @@ async function createRemoteIssue(
     : undefined;
   const assigneeMapping = findMappingByObsidianValue(ctx.assigneeMappings, local.assignee);
 
+  // Nesting = Blocks link (child blocks parent), not Sub-task / hierarchy parent.
   const created = await client.createIssue({
     projectKey: ctx.projectKey,
     summary: local.title,
     description: descriptionFromLines(local.descriptionLines),
-    parentKey: parentIssueKey,
-    issueTypeName: parentIssueKey ? 'Sub-task' : undefined,
     labels: labels.length > 0 ? labels : undefined,
     duedate: targetWrite.duedate,
     assignee: assigneeMapping ? toJiraAssigneePayload(assigneeMapping) : undefined,
     customFields: mergeCustomFields(targetWrite.customFields, startFields),
   });
 
-  return toRemoteIssueView(created, ctx.columns, {
+  if (parentIssueKey) {
+    await client.linkChildBlocksParent(created.key, parentIssueKey);
+  }
+
+  const view = toRemoteIssueView(created, ctx.columns, {
     dateFields: ctx.dateFields,
     timeSpentFieldId: ctx.timeSpentFieldId,
   });
+  return parentIssueKey
+    ? { ...view, parentIssueKey: parentIssueKey.toUpperCase() }
+    : view;
 }
 
 async function transitionToColumn(

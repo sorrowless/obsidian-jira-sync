@@ -10,6 +10,12 @@ import {
 } from './issue-filter';
 import { boardProjectJql } from './jql';
 import {
+  buildBlocksLinkBody,
+  findBlocksLinkIdBetween,
+  pickBlocksLinkType,
+  selfBlocksOther,
+} from './issue-links';
+import {
   JiraApiError,
   type CreateIssueInput,
   type JiraAssigneeRef,
@@ -17,6 +23,7 @@ import {
   type JiraBoardConfiguration,
   type JiraField,
   type JiraIssue,
+  type JiraIssueLinkType,
   type JiraTransition,
   type JiraUser,
   type UpdateIssueInput,
@@ -40,6 +47,8 @@ export class JiraClient {
   private readonly token: string;
   private readonly transport: HttpTransport;
   private readonly useAdfDescription: boolean;
+  /** Cached Blocks link type; `null` means lookup failed. */
+  private blocksLinkTypeCache: JiraIssueLinkType | null | undefined;
 
   constructor(options: JiraClientOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
@@ -540,6 +549,7 @@ export class JiraClient {
         'issuetype',
         'project',
         'parent',
+        'issuelinks',
         'labels',
         'duedate',
         'updated',
@@ -637,6 +647,71 @@ export class JiraClient {
     return this.requestJson<JiraField[]>('GET', `${apiV2Root(this.baseUrl)}/field`);
   }
 
+  async listIssueLinkTypes(): Promise<JiraIssueLinkType[]> {
+    const body = await this.requestJson<{ issueLinkTypes?: JiraIssueLinkType[] }>(
+      'GET',
+      `${apiV2Root(this.baseUrl)}/issueLinkType`,
+    );
+    return body.issueLinkTypes ?? [];
+  }
+
+  /**
+   * Link child → parent as Blocks (child blocks parent / parent is blocked by child).
+   * Idempotent when the link already exists.
+   */
+  async linkChildBlocksParent(childKey: string, parentKey: string): Promise<void> {
+    const child = childKey.trim().toUpperCase();
+    const parent = parentKey.trim().toUpperCase();
+    if (!child || !parent) {
+      throw new Error('Both child and parent issue keys are required for Blocks linking');
+    }
+    if (child === parent) {
+      throw new Error('Cannot link an issue to itself with Blocks');
+    }
+    // Always recreate: an existing link may be the wrong direction from older builds.
+    await this.unlinkChildBlocksParent(child, parent);
+    const linkType = await this.resolveBlocksLinkType();
+    let body = buildBlocksLinkBody(linkType, child, parent);
+    await this.requestJson('POST', `${apiV2Root(this.baseUrl)}/issueLink`, body);
+
+    // Verify UI direction: child must block parent. If the site’s inward/outward
+    // strings don’t match our guess, flip once and recreate.
+    const verify = await this.getIssue(child, ['issuelinks']);
+    if (!selfBlocksOther(verify.fields.issuelinks, child, parent)) {
+      await this.unlinkChildBlocksParent(child, parent);
+      body = {
+        type: body.type,
+        outwardIssue: body.inwardIssue,
+        inwardIssue: body.outwardIssue,
+      };
+      await this.requestJson('POST', `${apiV2Root(this.baseUrl)}/issueLink`, body);
+    }
+  }
+
+  /**
+   * Remove the Blocks link between child and parent if present (either end).
+   */
+  async unlinkChildBlocksParent(childKey: string, parentKey: string): Promise<void> {
+    const child = childKey.trim().toUpperCase();
+    const parent = parentKey.trim().toUpperCase();
+    if (!child || !parent || child === parent) {
+      return;
+    }
+    const fromChild = await this.getIssue(child, ['issuelinks']);
+    let linkId = findBlocksLinkIdBetween(fromChild.fields.issuelinks, child, parent);
+    if (!linkId) {
+      const fromParent = await this.getIssue(parent, ['issuelinks']);
+      linkId = findBlocksLinkIdBetween(fromParent.fields.issuelinks, parent, child);
+    }
+    if (!linkId) {
+      return;
+    }
+    await this.requestJson(
+      'DELETE',
+      `${apiV2Root(this.baseUrl)}/issueLink/${encodeURIComponent(linkId)}`,
+    );
+  }
+
   async findStartDateField(): Promise<JiraField | null> {
     return this.findFieldByName('Start date');
   }
@@ -658,6 +733,28 @@ export class JiraClient {
     return `${this.baseUrl}${path.startsWith('/') ? path : `/${path}`}`;
   }
 
+  private async resolveBlocksLinkType(): Promise<JiraIssueLinkType> {
+    if (this.blocksLinkTypeCache !== undefined) {
+      if (this.blocksLinkTypeCache === null) {
+        throw new Error(
+          'No Blocks issue link type found on this Jira instance. ' +
+            'Create a link type with outward "blocks" / inward "is blocked by".',
+        );
+      }
+      return this.blocksLinkTypeCache;
+    }
+    const types = await this.listIssueLinkTypes();
+    const picked = pickBlocksLinkType(types);
+    this.blocksLinkTypeCache = picked;
+    if (!picked) {
+      throw new Error(
+        'No Blocks issue link type found on this Jira instance. ' +
+          'Create a link type with outward "blocks" / inward "is blocked by".',
+      );
+    }
+    return picked;
+  }
+
   private encodeDescription(text: string, asAdf: boolean): unknown {
     if (asAdf) {
       return plainTextToAdf(text);
@@ -670,10 +767,11 @@ export class JiraClient {
     input: CreateIssueInput,
     asAdf: boolean,
   ): Promise<JiraIssue> {
+    // Nesting uses Blocks links, not Sub-task / hierarchy parent.
     const fields: Record<string, unknown> = {
       project: { key: input.projectKey },
       summary: input.summary,
-      issuetype: { name: input.issueTypeName ?? (input.parentKey ? 'Sub-task' : 'Task') },
+      issuetype: { name: input.issueTypeName ?? 'Task' },
     };
     if (input.description !== undefined) {
       fields.description = this.encodeDescription(input.description, asAdf);

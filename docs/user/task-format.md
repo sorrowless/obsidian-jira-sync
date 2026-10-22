@@ -61,9 +61,9 @@ Description lines are indented bullets **without** checkboxes, directly under th
 
 Those bullets sync to the Jira issue description (joined with newlines). Descriptions coming from Jira may be ADF or wiki markup; the plugin converts them to plain text before writing into the note. Rich formatting is not preserved on write-back.
 
-## Nested subtasks
+## Nested tasks (Blocks links)
 
-Indented checklist items are child tasks:
+Indented checklist items are child tasks. In Obsidian, nesting is **only** indentation — no extra Dataview fields. In Jira, nesting is a **Blocks** issue link: the child **blocks** the parent (the parent **is blocked by** the child). That matches an umbrella parent that should stay open until children are done. The plugin does **not** create classic Sub-tasks or set hierarchy `parent` for this.
 
 ```markdown
 - [ ] [Ship plugin](https://jira.example/browse/PROJ-10)
@@ -76,7 +76,21 @@ Indented checklist items are child tasks:
 In this example:
 
 - `Outline README` is description text for `PROJ-10`.
-- `Write docs` and `Add CI` are Jira sub-tasks of `PROJ-10`.
+- `Write docs` and `Add CI` are normal Jira issues that **block** `PROJ-10`.
+
+### When Jira Blocks become Obsidian children
+
+On pull, a Blocks link `A blocks B` nests A under B in Obsidian only if **all** of these hold:
+
+1. A and B are in the **same project** as the mapped board.
+2. Both issues are in the current sync set for that mapping (board + label/recency filters).
+3. A has **no** hierarchy parent in Jira (`parent` empty — not under an Epic/Story/etc.).
+4. If A already has a hierarchy parent (Epic, Story, …) → the Blocks link is left alone and **not** shown as Obsidian indent.
+5. If the blocked issue is in another project → ignore for nesting.
+
+If A would nest under several eligible parents, the plugin picks the lexicographically smallest parent key. Mutual Blocks cycles (`A blocks B` and `B blocks A`) are skipped and reported as a sync error.
+
+Unrelated Blocks links (other boards/projects, or blockers that already sit under an Epic/Story) are not removed and do not change Obsidian indent.
 
 After a rewrite, description bullets are ordered before child tasks.
 
@@ -101,4 +115,4 @@ New tasks created from Obsidian only target To Do, In Progress, or Done. Other c
 
 - Putting important sync metadata only in frontmatter; identity is the Jira browse URL in the task line.
 - Mixing multiple boards’ issues in one mapped note; each mapped note belongs to one board.
-- Expecting plain indented bullets (no checkbox) to become Jira sub-tasks — they are description lines.
+- Expecting plain indented bullets (no checkbox) to become nested Jira issues — they are description lines.

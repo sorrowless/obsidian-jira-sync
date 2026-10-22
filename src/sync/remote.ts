@@ -1,3 +1,4 @@
+import { resolveBlocksParentsForSyncSet } from '../jira/issue-links';
 import type { JiraIssue } from '../jira/types';
 import {
   jiraAssigneeDisplayName,
@@ -29,6 +30,7 @@ export interface RemoteIssueView {
   jiraStatusId: string;
   jiraStatusName: string;
   columnName: string;
+  /** Obsidian nest parent from Blocks heuristics (not hierarchy parent). */
   parentIssueKey: string | null;
   labels: string[];
   startDate: string | null;
@@ -53,19 +55,59 @@ export interface RemoteIssueView {
 export interface RemoteIssueViewOptions {
   dateFields?: DateFieldConfig | string;
   timeSpentFieldId?: string;
+  /**
+   * Board project key. When set, `parentIssueKey` is derived from Blocks links
+   * (child blocks parent) with same-project / no-hierarchy-parent heuristics.
+   */
+  mappingProjectKey?: string;
+}
+
+export interface IndexedRemoteIssues {
+  remoteMap: Map<string, RemoteIssueView>;
+  /** Blocks A↔B cycles that were skipped for nesting. */
+  cycleErrors: string[];
 }
 
 export function indexRemoteIssues(
   issues: readonly JiraIssue[],
   columns: ReadonlyArray<BoardColumnView>,
   dateFieldsOrOptions?: DateFieldConfig | string | RemoteIssueViewOptions,
-): Map<string, RemoteIssueView> {
-  const map = new Map<string, RemoteIssueView>();
+): IndexedRemoteIssues {
+  const options = normalizeRemoteOptions(dateFieldsOrOptions);
+  const views: RemoteIssueView[] = [];
   for (const issue of issues) {
-    const view = toRemoteIssueView(issue, columns, dateFieldsOrOptions);
-    map.set(view.key, view);
+    views.push(toRemoteIssueView(issue, columns, options));
   }
-  return map;
+
+  const cycleErrors: string[] = [];
+  const projectKey = options.mappingProjectKey?.trim() ?? '';
+  if (projectKey) {
+    const { parents, cycleErrors: cycles } = resolveBlocksParentsForSyncSet(
+      issues.map((issue) => {
+        const key = String(issue.key ?? '').toUpperCase();
+        const fields = issue.fields ?? {};
+        return {
+          key,
+          projectKey: String(fields.project?.key ?? ''),
+          hierarchyParentKey: fields.parent?.key
+            ? String(fields.parent.key).toUpperCase()
+            : null,
+          issuelinks: fields.issuelinks,
+        };
+      }),
+      projectKey,
+    );
+    cycleErrors.push(...cycles);
+    for (const view of views) {
+      view.parentIssueKey = parents.get(view.key) ?? null;
+    }
+  }
+
+  const remoteMap = new Map<string, RemoteIssueView>();
+  for (const view of views) {
+    remoteMap.set(view.key, view);
+  }
+  return { remoteMap, cycleErrors };
 }
 
 export function toRemoteIssueView(
@@ -80,7 +122,6 @@ export function toRemoteIssueView(
   const categoryKey = fields.status?.statusCategory?.key ?? null;
   const column = columnForStatusId(columns, statusId);
   const columnName = column?.name ?? statusName;
-  const parentKey = fields.parent?.key ? String(fields.parent.key).toUpperCase() : null;
 
   const dates = resolveIssueDates(fields as Record<string, unknown>, options.dateFields);
   const assignee = fields.assignee ?? null;
@@ -97,7 +138,8 @@ export function toRemoteIssueView(
     jiraStatusId: statusId,
     jiraStatusName: statusName,
     columnName,
-    parentIssueKey: parentKey,
+    // Filled by indexRemoteIssues via Blocks heuristics when mappingProjectKey is set.
+    parentIssueKey: null,
     labels: Array.isArray(fields.labels) ? fields.labels.map(String) : [],
     startDate: dates.startDate,
     dueDate: dates.dueDate,
@@ -116,7 +158,11 @@ export function toRemoteIssueView(
 
 function normalizeRemoteOptions(
   dateFieldsOrOptions?: DateFieldConfig | string | RemoteIssueViewOptions,
-): { dateFields: DateFieldConfig; timeSpentFieldId: string } {
+): {
+  dateFields: DateFieldConfig;
+  timeSpentFieldId: string;
+  mappingProjectKey?: string;
+} {
   if (typeof dateFieldsOrOptions === 'string') {
     return {
       dateFields: { startDateFieldId: dateFieldsOrOptions },
@@ -125,7 +171,9 @@ function normalizeRemoteOptions(
   }
   if (
     dateFieldsOrOptions &&
-    ('dateFields' in dateFieldsOrOptions || 'timeSpentFieldId' in dateFieldsOrOptions)
+    ('dateFields' in dateFieldsOrOptions ||
+      'timeSpentFieldId' in dateFieldsOrOptions ||
+      'mappingProjectKey' in dateFieldsOrOptions)
   ) {
     const opts = dateFieldsOrOptions as RemoteIssueViewOptions;
     const dateFields =
@@ -135,6 +183,7 @@ function normalizeRemoteOptions(
     return {
       dateFields,
       timeSpentFieldId: opts.timeSpentFieldId?.trim() || DEFAULT_TIME_SPENT_FIELD_ID,
+      mappingProjectKey: opts.mappingProjectKey?.trim() || undefined,
     };
   }
   return {

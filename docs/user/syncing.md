@@ -41,8 +41,10 @@ Apply your [conflict policy](settings.md#conflict-policy).
 
 ## Nesting
 
-- Indenting a checklist item under another checklist item makes it a Jira sub-task.
-- Indented bullets without checkboxes are description text, not subtasks.
+- Indenting a checklist item under another creates a Jira **Blocks** link: child **blocks** parent (parent **is blocked by** child). Both remain normal issues (not Sub-tasks).
+- Un-indenting removes that Blocks link between the pair; other Blocks links are left alone.
+- On pull, Blocks nesting follows the heuristics in [task format](task-format.md#when-jira-blocks-become-obsidian-children) (same project/sync set; blocker must not already have a hierarchy parent).
+- Indented bullets without checkboxes are description text, not children.
 
 ## Deletions (v1)
 

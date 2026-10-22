@@ -76,6 +76,7 @@ Thin HTTP client over Jira REST APIs. HTTP calls use Obsidian’s `requestUrl` (
 | Get issue | `GET /rest/api/2/issue/{key}` (and `/rest/api/3` when Cloud needs ADF) |
 | Create issue | `POST /rest/api/2/issue` |
 | Update issue | `PUT /rest/api/2/issue/{key}` |
+| Issue links | `GET /issueLinkType`, `POST /issueLink`, `DELETE /issueLink/{id}` (Blocks nesting) |
 | Transitions | `GET/POST /rest/api/2/issue/{key}/transitions` |
 | Labels | via issue `labels` field updates |
 | Search fields | `GET /rest/api/2/field` |
@@ -186,10 +187,11 @@ Load sync ledger ──┘
 
 ## Nesting model
 
-Obsidian nested checklist items map to Jira **sub-tasks**:
+Obsidian nested checklist items map to Jira **Blocks** links (not hierarchy Sub-tasks):
 
-- Child issue has `parent` set to the parent issue key.
-- Parent and child stay in the same Jira project (derived from the board / first create).
+- Direction: child **blocks** parent; parent **is blocked by** child (umbrella parent waits on children).
+- Create/update from Obsidian: create a normal Task, then `POST /issueLink`; un-indent deletes that link only.
+- Pull: derive Obsidian parent from `issuelinks` when the blocker is in the same board project/sync set and has no hierarchy `parent` (Epic/Story). See user docs for full heuristics.
 - Plain indented bullets without checkboxes are description content, not child tasks.
 
 ## Conflict detection

@@ -68,6 +68,8 @@ interface MockClientBundle {
   getBoardConfiguration: ReturnType<typeof vi.fn>;
   listBoardIssues: ReturnType<typeof vi.fn>;
   createIssue: ReturnType<typeof vi.fn>;
+  linkChildBlocksParent: ReturnType<typeof vi.fn>;
+  unlinkChildBlocksParent: ReturnType<typeof vi.fn>;
   updateIssue: ReturnType<typeof vi.fn>;
   listTransitions: ReturnType<typeof vi.fn>;
   transitionIssue: ReturnType<typeof vi.fn>;
@@ -131,15 +133,47 @@ function createMockClient(initial: JiraIssue[] = []): MockClientBundle {
     const created = issueRow(key, input.summary, {
       description: input.description ?? '',
       labels: input.labels ?? [],
-      parent: input.parentKey ? { key: input.parentKey } : undefined,
       issuetype: {
-        id: input.parentKey ? 'sub' : '1',
-        name: input.parentKey ? 'Sub-task' : 'Task',
-        subtask: Boolean(input.parentKey),
+        id: '1',
+        name: 'Task',
+        subtask: false,
       },
     });
     issues.set(key, created);
     return structuredClone(created);
+  });
+
+  const linkChildBlocksParent = vi.fn(async (childKey: string, parentKey: string) => {
+    const row = issues.get(childKey.toUpperCase());
+    if (!row) {
+      throw new Error(`Issue ${childKey} not found`);
+    }
+    row.fields.issuelinks = [
+      {
+        id: `link-${childKey}-${parentKey}`,
+        type: {
+          id: '10000',
+          name: 'Blocks',
+          inward: 'is blocked by',
+          outward: 'blocks',
+        },
+        // Child is outward end (blocker) → GET child shows outwardIssue = parent.
+        outwardIssue: { key: parentKey.toUpperCase() },
+      },
+    ];
+  });
+
+  const unlinkChildBlocksParent = vi.fn(async (childKey: string, parentKey: string) => {
+    const row = issues.get(childKey.toUpperCase());
+    if (!row?.fields.issuelinks) {
+      return;
+    }
+    const parent = parentKey.toUpperCase();
+    row.fields.issuelinks = row.fields.issuelinks.filter(
+      (link) =>
+        link.outwardIssue?.key?.toUpperCase() !== parent &&
+        link.inwardIssue?.key?.toUpperCase() !== parent,
+    );
   });
 
   const updateIssue = vi.fn(async (issueKey: string, input: {
@@ -198,6 +232,8 @@ function createMockClient(initial: JiraIssue[] = []): MockClientBundle {
     listBoardIssues,
     listBoardIssuesForSync,
     createIssue,
+    linkChildBlocksParent,
+    unlinkChildBlocksParent,
     updateIssue,
     listTransitions,
     transitionIssue,
@@ -211,6 +247,8 @@ function createMockClient(initial: JiraIssue[] = []): MockClientBundle {
     getBoardConfiguration,
     listBoardIssues,
     createIssue,
+    linkChildBlocksParent,
+    unlinkChildBlocksParent,
     updateIssue,
     listTransitions,
     transitionIssue,
@@ -269,6 +307,28 @@ function mappingLedgerKey(issueKey: string): string {
 }
 
 describe('sync engine', () => {
+  it('creates nested child as Task and Blocks-links it to the parent', async () => {
+    const mock = createMockClient([
+      issueRow('PROJ-1', 'Parent', {
+        project: { id: '1', key: 'PROJ' },
+      }),
+    ]);
+    const { result } = await runSync({
+      note: [
+        `- [ ] [Parent](${BASE_URL}/browse/PROJ-1)`,
+        '    - [ ] Child idea',
+        '',
+      ].join('\n'),
+      mock,
+    });
+
+    expect(result.mappings[0]?.errors ?? []).toEqual([]);
+    expect(mock.createIssue).toHaveBeenCalledTimes(1);
+    expect(mock.createIssue.mock.calls[0]?.[0]?.summary).toBe('Child idea');
+    expect(mock.createIssue.mock.calls[0]?.[0]?.parentKey).toBeUndefined();
+    expect(mock.linkChildBlocksParent).toHaveBeenCalledWith('PROJ-100', 'PROJ-1');
+  });
+
   it('creates a remote issue from an unlinked checklist task', async () => {
     const mock = createMockClient();
     const { result, written, writeNote } = await runSync({
