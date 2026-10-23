@@ -55,6 +55,8 @@ make install          # npm ci
 make build            # typecheck + production bundle → main.js
 make test
 make ci               # docs check + install + build + test
+make version show     # print current version
+make version bump     # bump patch (or: bump patch|minor|major)
 make release          # build + zip under dist/
 make release bump=patch   # bump version, then release zip
 make install-vault VAULT="$HOME/path/to/vault"

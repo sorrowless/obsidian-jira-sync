@@ -1,6 +1,6 @@
 {
   "name": "obsidian-jira-sync",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Bidirectional sync between Obsidian checklist tasks and Jira boards.",
   "main": "main.js",
   "type": "module",

@@ -5,10 +5,13 @@
 #   make build
 #   make test
 #   make ci
+#   make version show
+#   make version bump [patch|minor|major]
 #   make release
 #   make install-vault VAULT=/path/to/vault
 
-.PHONY: help install build test ci release install-vault clean dev package
+.PHONY: help install build test ci release install-vault clean dev package version
+.PHONY: show bump patch minor major
 
 PLUGIN_ID := obsidian-jira-sync
 DIST_DIR := dist
@@ -20,12 +23,19 @@ BUMP ?=
 # Required for install-vault: path to an Obsidian vault root
 VAULT ?=
 
+# Secondary goals for: make version show | make version bump [patch|minor|major]
+VERSION_ARGS := $(filter-out version,$(MAKECMDGOALS))
+VERSION_CMD := $(firstword $(VERSION_ARGS))
+VERSION_LEVEL := $(or $(word 2,$(VERSION_ARGS)),patch)
+
 help:
 	@echo "Targets:"
 	@echo "  install         Install npm dependencies (npm ci)"
 	@echo "  build           Typecheck and production-bundle main.js"
 	@echo "  test            Run unit tests"
 	@echo "  ci              Docs layout check + install + build + test"
+	@echo "  version show    Print current package.json version"
+	@echo "  version bump    Bump version (default patch; or patch|minor|major)"
 	@echo "  release         Build and package plugin zip under $(DIST_DIR)/"
 	@echo "                  Optional: bump=patch|minor|major (runs npm version)"
 	@echo "  install-vault   Copy built plugin into a vault (VAULT=/path/to/vault)"
@@ -47,6 +57,23 @@ dev:
 
 ci: ## Full local/CI gate
 	./scripts/ci-check.sh
+
+version:
+ifeq ($(VERSION_CMD),show)
+	@node -p "require('./package.json').version"
+else ifeq ($(VERSION_CMD),bump)
+ifeq ($(filter $(VERSION_LEVEL),patch minor major),)
+	$(error version bump level must be patch, minor, or major (got '$(VERSION_LEVEL)'))
+endif
+	@$(NPM) version $(VERSION_LEVEL) --no-git-tag-version
+	@echo "version: $$(node -p "require('./package.json').version")"
+else
+	@echo "Usage: make version show | make version bump [patch|minor|major]"; exit 1
+endif
+
+# Absorb secondary words so Make does not treat them as unknown targets
+show bump patch minor major:
+	@:
 
 release:
 ifneq ($(BUMP),)
