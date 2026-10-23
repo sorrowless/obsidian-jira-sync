@@ -38,4 +38,19 @@ describe('jira urls', () => {
       url: 'https://x/browse/A-1',
     });
   });
+
+  it('parses markdown links whose title contains brackets', () => {
+    expect(
+      parseMarkdownLink('[[not-fix some task]](https://jira.example/browse/PROJ-1)'),
+    ).toEqual({
+      title: '[not-fix some task]',
+      url: 'https://jira.example/browse/PROJ-1',
+    });
+    expect(
+      parseMarkdownLink('[[[nested]]](https://jira.example/browse/PROJ-2)'),
+    ).toEqual({
+      title: '[[nested]]',
+      url: 'https://jira.example/browse/PROJ-2',
+    });
+  });
 });

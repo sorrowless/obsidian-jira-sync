@@ -1,4 +1,4 @@
-import { extractIssueKeyFromUrl } from '../jira/urls';
+import { extractIssueKeyFromUrl, parseMarkdownLinkAtStart } from '../jira/urls';
 import { parseAssigneeField } from './assignee';
 import { parseTaskDates } from './dates';
 import { parseTimeSpentField } from './timespent';
@@ -13,8 +13,6 @@ const TASK_LINE =
   /^([\t >]*)([-*]|[0-9]+\.)\s+\[(.)\]\s+(.*)$/u;
 const BULLET_LINE =
   /^([\t >]*)([-*]|[0-9]+\.)\s+(.*)$/u;
-/** Link at the start of the body, with optional trailing metadata (dates, etc.). */
-const LINK_AT_START = /^\[([^\]]*)\]\(([^)\s]+)\)\s*(.*)$/u;
 
 interface FlatTask {
   lineIndex: number;
@@ -124,17 +122,14 @@ function resolveTaskBody(
   assignee: string | null;
   timeSpentSeconds: number | null;
 } {
-  const linkMatch = body.match(LINK_AT_START);
+  const linkMatch = parseMarkdownLinkAtStart(body);
   if (linkMatch) {
-    const title = linkMatch[1] ?? '';
-    const url = linkMatch[2] ?? '';
-    const suffix = linkMatch[3] ?? '';
-    const withTime = parseTimeSpentField(suffix);
+    const withTime = parseTimeSpentField(linkMatch.rest);
     const withAssignee = parseAssigneeField(withTime.remainder);
     const dates = parseTaskDates(withAssignee.remainder);
     return {
-      title: title.trim() || dates.remainder,
-      issueKey: extractIssueKeyFromUrl(url, jiraBaseUrl),
+      title: linkMatch.title.trim() || dates.remainder,
+      issueKey: extractIssueKeyFromUrl(linkMatch.url, jiraBaseUrl),
       startDate: dates.startDate,
       dueDate: dates.dueDate,
       assignee: withAssignee.assignee,

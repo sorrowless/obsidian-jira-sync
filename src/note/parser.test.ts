@@ -4,6 +4,19 @@ import { parseNoteTasks } from './parser';
 const BASE = 'https://jira.example';
 
 describe('parseNoteTasks', () => {
+  it('parses linked titles that contain square brackets without doubling', () => {
+    const roots = parseNoteTasks(
+      [
+        '- [ ] [[not-fix some task]](https://jira.example/browse/PROJ-9)',
+        '',
+      ].join('\n'),
+      { jiraBaseUrl: 'https://jira.example' },
+    );
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.title).toBe('[not-fix some task]');
+    expect(roots[0]?.issueKey).toBe('PROJ-9');
+  });
+
   it('parses linked and unlinked tasks with nesting and dates', () => {
     const md = [
       '- [ ] [Parent](https://jira.example/browse/PROJ-1) 🛫 2026-10-02 📅 2026-10-05',

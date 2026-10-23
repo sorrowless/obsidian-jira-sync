@@ -73,11 +73,67 @@ export function extractIssueKeyFromUrl(url: string, baseUrl: string): string | n
   return keyPart.toUpperCase();
 }
 
-/** Parse a line body that is exactly `[title](url)`. */
-export function parseMarkdownLink(body: string): { title: string; url: string } | null {
-  const match = body.trim().match(/^\[([^\]]*)\]\(([^)\s]+)\)$/u);
-  if (!match) {
+/**
+ * Parse a Markdown link at the start of `body`: `[title](url)` with optional rest.
+ * Title may contain nested brackets (e.g. Obsidian `[[wikilink]]` as link text).
+ * Uses balanced-bracket matching so the first `]` inside the title does not truncate.
+ */
+export function parseMarkdownLinkAtStart(
+  body: string,
+): { title: string; url: string; rest: string } | null {
+  const input = body;
+  if (!input.startsWith('[')) {
     return null;
   }
-  return { title: match[1] ?? '', url: match[2] ?? '' };
+  let depth = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (ch === '[') {
+      depth += 1;
+      continue;
+    }
+    if (ch !== ']') {
+      continue;
+    }
+    depth -= 1;
+    if (depth !== 0) {
+      continue;
+    }
+    if (input[i + 1] !== '(') {
+      return null;
+    }
+    const urlStart = i + 2;
+    let urlEnd = -1;
+    for (let j = urlStart; j < input.length; j += 1) {
+      if (input[j] === ')') {
+        urlEnd = j;
+        break;
+      }
+      // URLs in our notes are single tokens (no spaces).
+      if (/\s/u.test(input[j] ?? '')) {
+        return null;
+      }
+    }
+    if (urlEnd < 0) {
+      return null;
+    }
+    const title = input.slice(1, i);
+    const url = input.slice(urlStart, urlEnd);
+    if (!url) {
+      return null;
+    }
+    const after = input.slice(urlEnd + 1);
+    const rest = after.replace(/^\s+/u, '');
+    return { title, url, rest };
+  }
+  return null;
+}
+
+/** Parse a line body that is exactly `[title](url)`. */
+export function parseMarkdownLink(body: string): { title: string; url: string } | null {
+  const parsed = parseMarkdownLinkAtStart(body.trim());
+  if (!parsed || parsed.rest !== '') {
+    return null;
+  }
+  return { title: parsed.title, url: parsed.url };
 }
