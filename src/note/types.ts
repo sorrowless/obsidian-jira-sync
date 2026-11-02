@@ -17,7 +17,7 @@ export interface ParsedTaskNode {
    */
   done: boolean | null;
   /**
-   * Synced workflow status: todo `[ ]`, in_progress `[/]`, done `[x]`/`[X]`.
+   * Synced workflow status: todo `[ ]`, in_progress `[/]`, review `[?]`, done `[x]`/`[X]`.
    * `null` when the checkbox is outside the sync contract (e.g. `[-]`).
    */
   status: TaskStatus | null;

@@ -3,14 +3,20 @@
  *
  * Coarse checkbox:
  *   `[ ]` ↔ todo
- *   `[/]` ↔ in_progress family (any non-todo/done column, e.g. Review)
+ *   `[/]` ↔ in_progress
+ *   `[?]` ↔ review
  *   `[x]` ↔ done family
  */
 
-export type TaskStatus = 'todo' | 'in_progress' | 'done';
+export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done';
 
 export function isTaskStatus(value: unknown): value is TaskStatus {
-  return value === 'todo' || value === 'in_progress' || value === 'done';
+  return (
+    value === 'todo' ||
+    value === 'in_progress' ||
+    value === 'review' ||
+    value === 'done'
+  );
 }
 
 /** Map an Obsidian checkbox character to a synced status. */
@@ -24,6 +30,9 @@ export function statusFromCheckbox(checkboxChar: string): TaskStatus | null {
   if (checkboxChar === '/') {
     return 'in_progress';
   }
+  if (checkboxChar === '?') {
+    return 'review';
+  }
   return null;
 }
 
@@ -34,6 +43,8 @@ export function checkboxFromStatus(status: TaskStatus): string {
       return ' ';
     case 'in_progress':
       return '/';
+    case 'review':
+      return '?';
     case 'done':
       return 'x';
     default: {
@@ -63,6 +74,7 @@ export function statusLabelFromColumnName(columnName: string): string {
 }
 
 const TODO_NAMES = new Set(['to do', 'todo', 'to-do']);
+const REVIEW_NAMES = new Set(['review']);
 const DONE_NAMES = new Set([
   'done',
   'trashed',
@@ -89,6 +101,9 @@ export function statusFromJiraStatus(
   if (TODO_NAMES.has(name) || category === 'new') {
     return 'todo';
   }
+  if (REVIEW_NAMES.has(name)) {
+    return 'review';
+  }
   return 'in_progress';
 }
 
@@ -114,7 +129,6 @@ export function columnForStatusId(
 
 /**
  * Pick a target column for a coarse Obsidian status when creating/transitioning.
- * Review (etc.) is never chosen from Obsidian — only To Do / In Progress / Done.
  */
 export function pickColumnForCoarseStatus(
   columns: ReadonlyArray<BoardColumnView>,
@@ -148,12 +162,25 @@ export function pickColumnForCoarseStatus(
     );
   }
 
-  // in_progress → prefer exact "In Progress", else first non-todo/done column
+  if (status === 'review') {
+    return (
+      scored.find((item) => REVIEW_NAMES.has(item.column.name.trim().toLowerCase()))?.column ??
+      scored.find((item) => item.columnStatus === 'review')?.column ??
+      null
+    );
+  }
+
+  // in_progress → prefer exact "In Progress", else first in_progress column
+  // (do not fall back onto Review)
   return (
     scored.find((item) => item.column.name.trim().toLowerCase() === 'in progress')?.column ??
     scored.find((item) => item.columnStatus === 'in_progress')?.column ??
-    scored.find((item) => item.columnStatus !== 'todo' && item.columnStatus !== 'done')
-      ?.column ??
+    scored.find(
+      (item) =>
+        item.columnStatus !== 'todo' &&
+        item.columnStatus !== 'done' &&
+        item.columnStatus !== 'review',
+    )?.column ??
     columns[0] ??
     null
   );
@@ -168,6 +195,9 @@ function inferColumnCoarseStatus(
   }
   if (DONE_NAMES.has(column.name.trim().toLowerCase())) {
     return 'done';
+  }
+  if (REVIEW_NAMES.has(column.name.trim().toLowerCase())) {
+    return 'review';
   }
   if (statusMeta) {
     for (const statusId of column.statusIds) {

@@ -99,12 +99,13 @@ After a rewrite, description bullets are ordered before child tasks.
 | Checkbox | Meaning | Typical Jira column |
 | --- | --- | --- |
 | `[ ]` | To-Do | To Do |
-| `[/]` | In progress family | In Progress, Review, … |
+| `[/]` | In Progress | In Progress (other intermediate columns map here too) |
+| `[?]` | Review | Review |
 | `[x]` or `[X]` | Done family | Done, Trashed, Canceled |
 
-Exact column names come from the mapped board. The board column is authoritative for status labels: if the ticket is in Review but still has an `in-progress` label, sync removes `in-progress`, adds `review`, and keeps `[/]` in Obsidian.
+Exact column names come from the mapped board. The board column is authoritative for status labels: if the ticket is in Review but still has an `in-progress` label, sync removes `in-progress`, adds `review`, and keeps `[?]` in Obsidian.
 
-New tasks created from Obsidian only target To Do, In Progress, or Done. Other checkbox characters (for example `[-]`) are left alone and are not treated as status sync.
+New tasks created from Obsidian target To Do, In Progress, Review, or Done. Other checkbox characters (for example `[-]`) are left alone and are not treated as status sync.
 
 ## List markers and indentation
 

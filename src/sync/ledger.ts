@@ -9,7 +9,7 @@ export interface ContentSnapshot {
   title: string;
   description: string;
   status: TaskStatus;
-  /** Exact Jira status id — detects Review → In Progress while checkbox stays [/]. */
+  /** Exact Jira status id — detects column moves even when coarse checkbox is unchanged. */
   jiraStatusId: string;
   jiraStatusName: string;
   parentIssueKey: string | null;

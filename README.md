@@ -30,7 +30,7 @@ Synced Obsidian lines use a Markdown link to the Jira browse page:
 | Title, description, nesting | Priority, assignees, components |
 | Browse-link identity (`/browse/KEY`) | Automatic delete on either side |
 | Start (`🛫`) + due (`📅`) dates | Rich ADF/wiki description round-trip |
-| Status via checkbox + board column + labels | Creating Review (etc.) from Obsidian |
+| Status via checkbox + board column + labels (`[?]` ↔ Review) | Arbitrary extra columns beyond To Do / In Progress / Review / Done |
 | Conflict preference setting | Mapping one note to multiple boards |
 
 ## Documentation

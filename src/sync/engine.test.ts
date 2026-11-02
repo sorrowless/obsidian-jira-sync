@@ -35,6 +35,10 @@ function inProgressLink(key: string, title: string): string {
   return `- [/] [${title}](${BASE_URL}/browse/${key})`;
 }
 
+function reviewLink(key: string, title: string): string {
+  return `- [?] [${title}](${BASE_URL}/browse/${key})`;
+}
+
 function issueRow(
   key: string,
   summary: string,
@@ -490,7 +494,7 @@ describe('sync engine', () => {
     expect(written).toContain('[Remote wins]');
   });
 
-  it('reconciles Review labels without leaving Review when checkbox stays [/]', async () => {
+  it('reconciles Review labels without leaving Review when checkbox stays [?]', async () => {
     const mock = createMockClient([
       issueRow('PROJ-7', 'In review', {
         status: {
@@ -509,7 +513,7 @@ describe('sync engine', () => {
       mappingKey: key,
       title: 'In review',
       description: '',
-      status: 'in_progress',
+      status: 'review',
       jiraStatusId: '3',
       jiraStatusName: 'Review',
       parentIssueKey: null,
@@ -517,7 +521,7 @@ describe('sync engine', () => {
     });
 
     const { result } = await runSync({
-      note: inProgressLink('PROJ-7', 'In review'),
+      note: reviewLink('PROJ-7', 'In review'),
       mock,
       ledger,
     });

@@ -32,11 +32,11 @@ Outcome: a repository that can be developed against without ambiguity on v1 beha
 
 - Sync ledger in plugin data (including Jira status id / column name)
 - Classification and mutation pipeline per [sync-rules.md](sync-rules.md)
-- Column-wins label reconciliation; checkbox → To Do / In Progress / Done transitions
+- Column-wins label reconciliation; checkbox → To Do / In Progress / Review / Done transitions
 - Note writer for canonical linked blocks
 - Manual sync + interval + startup + 10s file-change debounce
 - Sync report / notices
-- Unit tests for classification, conflict policy, nesting, and Review vs `in-progress` labels
+- Unit tests for classification, conflict policy, nesting, and Review (`[?]`) vs `in-progress` labels
 
 ## Phase 4 — Hardening (done)
 

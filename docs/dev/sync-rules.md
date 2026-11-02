@@ -19,7 +19,7 @@ Not synced in v1:
 
 - Priority, assignees, components (non-filter labels are not edited except to preserve them)
 - Automatic deletion
-- Arbitrary column creation from Obsidian beyond To Do / In Progress / Done
+- Arbitrary column creation from Obsidian beyond To Do / In Progress / Review / Done
 
 ## Mapping label filters
 
@@ -109,14 +109,16 @@ Accepted note values: `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` (local time). Due/targe
 | Obsidian | Meaning |
 | --- | --- |
 | `[ ]` | To Do |
-| `[/]` | In progress family (any non-todo/done column) |
+| `[/]` | In Progress |
+| `[?]` | Review |
 | `[x]` or `[X]` | Done family |
 
 Mapping from Jira status / column name (case-insensitive):
 
 - To Do / Todo, or status category `new` → `[ ]`
+- Review → `[?]`
 - Done, Trashed, Canceled / Cancelled, or status category `done` → `[x]`
-- Everything else (In Progress, Review, …) → `[/]`
+- Everything else (In Progress, QA, …) → `[/]`
 
 Other Obsidian checkbox characters (for example `[-]`) are not mapped.
 
@@ -131,7 +133,7 @@ On every sync for a linked issue:
 3. Among labels that belong to the board’s status-label set, remove any that are not the desired one and ensure the desired label is present.
 4. Never remove non-status labels (e.g. `bug`, `backend`).
 
-Example: issue is in column **Review** but still has label `in-progress` → remove `in-progress`, add `review`, keep Obsidian checkbox as `[/]`.
+Example: issue is in column **Review** but still has label `in-progress` → remove `in-progress`, add `review`, keep Obsidian checkbox as `[?]`.
 
 ### Checkbox changes from Obsidian
 
@@ -140,14 +142,15 @@ When the user changes the checkbox on an already-linked task:
 | New checkbox | Target column on the board |
 | --- | --- |
 | `[ ]` | To Do (or first `new` category column) |
-| `[/]` | In Progress (name match, else first non-todo/done column) |
+| `[/]` | In Progress (name match, else first non-todo/done/review column) |
+| `[?]` | Review (name match) |
 | `[x]` | Done (or first `done` category column) |
 
-The plugin transitions the issue toward that column and then reconciles status labels to match. Review cannot be selected from Obsidian; leaving `[/]` alone preserves Review.
+The plugin transitions the issue toward that column and then reconciles status labels to match.
 
 ### New tasks from Obsidian
 
-Unlinked checklist items create issues only in unambiguous columns: To Do, In Progress, or Done according to the checkbox. After create, attach the matching status label.
+Unlinked checklist items create issues in To Do, In Progress, Review, or Done according to the checkbox. After create, attach the matching status label.
 
 ## Nesting
 
@@ -260,7 +263,7 @@ Jira has a new issue in To Do with status label `to-do`.
 
 Issue `PROJ-7` is in column Review, labels `in-progress` + `bug`.
 
-After sync: labels `review` + `bug`; note checkbox stays `[/]` if already so.
+After sync: labels `review` + `bug`; note checkbox stays `[?]` if already so (or becomes `[?]` when pulling Review from Jira).
 
 ### Example C — nested child
 

@@ -24,6 +24,7 @@ import { syncAllMappings } from './sync/engine';
 import { emptyLedger, type LedgerStore, type PendingLink, normalizeLedgerStore } from './sync/ledger';
 import { collectSyncErrors, formatSyncNotice } from './sync/report';
 import { SyncReportModal } from './sync/report-modal';
+import { isTaskStatus } from './sync/status';
 import { pathsReferToSameNote, resolveMarkdownFile } from './vault/resolve-note';
 import { JiraClient } from './jira/client';
 import { createObsidianRequestTransport } from './jira/http';
@@ -483,10 +484,7 @@ function normalizePendingLinks(raw: PendingLink[] | undefined): PendingLink[] {
       issueKey: String(item.issueKey ?? '').toUpperCase(),
       title: String(item.title ?? ''),
       description: String(item.description ?? ''),
-      status:
-        item.status === 'todo' || item.status === 'in_progress' || item.status === 'done'
-          ? item.status
-          : 'todo',
+      status: isTaskStatus(item.status) ? item.status : 'todo',
       parentIssueKey:
         item.parentIssueKey === null || item.parentIssueKey === undefined
           ? null

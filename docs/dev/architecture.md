@@ -16,7 +16,7 @@ This document describes the architecture for the Obsidian ↔ Jira sync plugin.
 - Automatic deletion on either side when a previously synced task disappears.
 - Mapping one note to multiple boards, or one board to multiple notes.
 - Preserving rich Jira description formatting (ADF / wiki markup) round-trip.
-- Creating arbitrary board columns from Obsidian (only To Do / In Progress / Done).
+- Creating arbitrary board columns from Obsidian (only To Do / In Progress / Review / Done).
 
 ## High-level components
 
@@ -117,7 +117,7 @@ interface LedgerEntry {
   mappingKey: string; // notePath + boardId
   title: string;
   description: string;
-  status: 'todo' | 'in_progress' | 'done';
+  status: 'todo' | 'in_progress' | 'review' | 'done';
   jiraStatusId: string;
   jiraStatusName: string; // board column / status name
   parentIssueKey: string | null;
@@ -129,7 +129,7 @@ interface LedgerEntry {
 }
 ```
 
-The ledger distinguishes local-only change, remote-only change, conflict, and unchanged. Storing `jiraStatusId` / `jiraStatusName` detects column moves (e.g. Review → In Progress) even when the Obsidian checkbox stays `[/]`.
+The ledger distinguishes local-only change, remote-only change, conflict, and unchanged. Storing `jiraStatusId` / `jiraStatusName` detects column moves (e.g. Review → In Progress) which also change the Obsidian checkbox (`[?]` ↔ `[/]`).
 
 ### Sync engine
 

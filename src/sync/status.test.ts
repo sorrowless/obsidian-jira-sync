@@ -11,15 +11,19 @@ describe('status mapping', () => {
   it('maps checkboxes', () => {
     expect(statusFromCheckbox(' ')).toBe('todo');
     expect(statusFromCheckbox('/')).toBe('in_progress');
+    expect(statusFromCheckbox('?')).toBe('review');
     expect(statusFromCheckbox('x')).toBe('done');
     expect(checkboxFromStatus('in_progress')).toBe('/');
+    expect(checkboxFromStatus('review')).toBe('?');
   });
 
   it('maps jira status names and categories', () => {
     expect(statusFromJiraStatus('To Do', 'new')).toBe('todo');
-    expect(statusFromJiraStatus('Review', 'indeterminate')).toBe('in_progress');
+    expect(statusFromJiraStatus('In Progress', 'indeterminate')).toBe('in_progress');
+    expect(statusFromJiraStatus('Review', 'indeterminate')).toBe('review');
     expect(statusFromJiraStatus('Canceled', 'done')).toBe('done');
     expect(statusFromJiraStatus('Weird', 'done')).toBe('done');
+    expect(statusFromJiraStatus('QA', 'indeterminate')).toBe('in_progress');
   });
 
   it('builds status labels from column names', () => {
@@ -36,6 +40,17 @@ describe('status mapping', () => {
     ];
     expect(pickColumnForCoarseStatus(columns, 'todo')?.name).toBe('To Do');
     expect(pickColumnForCoarseStatus(columns, 'in_progress')?.name).toBe('In Progress');
+    expect(pickColumnForCoarseStatus(columns, 'review')?.name).toBe('Review');
     expect(pickColumnForCoarseStatus(columns, 'done')?.name).toBe('Done');
+  });
+
+  it('does not fall back from in_progress onto Review', () => {
+    const columns = [
+      { name: 'To Do', statusIds: ['1'] },
+      { name: 'Review', statusIds: ['3'] },
+      { name: 'Done', statusIds: ['4'] },
+    ];
+    expect(pickColumnForCoarseStatus(columns, 'in_progress')?.name).not.toBe('Review');
+    expect(pickColumnForCoarseStatus(columns, 'review')?.name).toBe('Review');
   });
 });

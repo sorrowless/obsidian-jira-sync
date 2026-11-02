@@ -16,7 +16,7 @@ For each mapped note, the plugin will:
 ## Create rules
 
 **Obsidian only (new, unlinked task)**  
-Create a Jira issue (To Do / In Progress / Done from the checkbox), then rewrite the note line as a link to that issue.
+Create a Jira issue (To Do / In Progress / Review / Done from the checkbox), then rewrite the note line as a link to that issue.
 
 **Jira only (never synced before)**  
 Append a linked task block to the note (under its parent when the parent already exists).
@@ -34,9 +34,9 @@ Apply your [conflict policy](settings.md#conflict-policy).
 
 ## Status, columns, and labels
 
-- `[ ]` / `[/]` / `[x]` map to To Do / in-progress family / Done family.
+- `[ ]` / `[/]` / `[?]` / `[x]` map to To Do / In Progress / Review / Done family.
 - Board column is the source of truth for which status label the issue should have.
-- Example: column Review with leftover label `in-progress` → remove `in-progress`, add `review`, keep `[/]` in Obsidian.
+- Example: column Review with leftover label `in-progress` → remove `in-progress`, add `review`, keep `[?]` in Obsidian.
 - Non-status labels are left alone.
 
 ## Nesting
