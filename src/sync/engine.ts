@@ -4,6 +4,7 @@ import type { ParsedTaskNode } from '../note/types';
 import type { JiraClient } from '../jira/client';
 import { describeIssueSyncFilter } from '../jira/issue-filter';
 import { recencyJql, type RecencyField, type RecencyUnit } from '../jira/jql';
+import { extractIssueKeyFromUrl } from '../jira/urls';
 import {
   mappingRecencyFilter,
   type ConflictPolicy,
@@ -37,7 +38,7 @@ import { reconcileStatusLabels, desiredStatusLabel } from './labels';
 import {
   cloneLedger,
   commitMappingLedger,
-  contentHash,
+  contentCoreEqual,
   contentSnapshot,
   descriptionFromLines,
   descriptionToLines,
@@ -45,6 +46,7 @@ import {
   makeLedgerEntry,
   mappingKey,
   normalizeDescription,
+  snapshotFromLedger,
   type ContentSnapshot,
   type LedgerEntry,
   type LedgerStore,
@@ -109,6 +111,7 @@ export interface MappingSyncCounts {
   unchanged: number;
   unresolvedRemovals: number;
   recoveredPendingLinks: number;
+  duplicateSkips: number;
   labelReconciliations: number;
   assigneeReconciliations: number;
   timeSpentReconciliations: number;
@@ -148,6 +151,12 @@ interface MutableTask {
   title: string;
   descriptionLines: string[];
   issueKey: string | null;
+  /** Leading title-link URL (Jira or external), or null for plain titles. */
+  titleLinkUrl: string | null;
+  /** Key from `[jira::]` when in dual-link mode. */
+  jiraIssueKey: string | null;
+  /** Unknown Dataview `[key:: value]` segments preserved on rewrite. */
+  unknownInlineFields: string[];
   startDate: string | null;
   dueDate: string | null;
   assignee: string | null;
@@ -357,11 +366,18 @@ export async function syncOneMapping(
   walkMutable(roots, (task) => {
     localOrder.push(task);
     if (task.issueKey !== null) {
-      localByKey.set(task.issueKey.toUpperCase(), task);
+      const issueKey = task.issueKey.toUpperCase();
+      // First occurrence wins: later checklist rows that reuse the same
+      // Jira key (common with dual-link / copied Tracker lines) must not
+      // overwrite the canonical local view used for parent lookup + sync.
+      if (!localByKey.has(issueKey)) {
+        localByKey.set(issueKey, task);
+      }
     }
   });
 
   const mappingPending = pendingLinks.filter((item) => item.mappingKey === key);
+  const syncedIssueKeys = new Set<string>();
 
   for (const local of localOrder) {
     const parentIssueKey = local.parent?.issueKey?.toUpperCase() ?? null;
@@ -370,10 +386,27 @@ export async function syncOneMapping(
       const recovered = takePendingMatch(mappingPending, local.title, parentIssueKey);
       if (recovered) {
         const issueKey = recovered.issueKey.toUpperCase();
+        if (syncedIssueKeys.has(issueKey)) {
+          counts.duplicateSkips += 1;
+          actions.push({
+            kind: 'duplicate-skip',
+            title: local.title,
+            issueKey,
+            detail:
+              'pending relink skipped; another checklist line already syncs this Jira key',
+          });
+          continue;
+        }
         local.issueKey = issueKey;
+        if (isExternalTitleLink(local, options.baseUrl)) {
+          local.jiraIssueKey = issueKey;
+        }
         local.dirty = true;
         markRootDirty(local);
-        localByKey.set(issueKey, local);
+        if (!localByKey.has(issueKey)) {
+          localByKey.set(issueKey, local);
+        }
+        syncedIssueKeys.add(issueKey);
         writeLedgerFromLocal(
           workingLedger,
           key,
@@ -400,6 +433,56 @@ export async function syncOneMapping(
       if (!ctx.projectKey) {
         errors.push(`Create remote "${local.title}": board project key is unknown`);
         continue;
+      }
+
+      const external = isExternalTitleLink(local, options.baseUrl);
+
+      // Dual-link: try to bind an existing Jira issue by exact summary first.
+      if (external && !dryRun) {
+        try {
+          const matched = await options.client.findIssueByExactSummary(
+            ctx.projectKey,
+            local.title,
+            ctx.issueFields,
+          );
+          if (matched) {
+            const view = toRemoteIssueView(matched, ctx.columns, {
+              dateFields: ctx.dateFields,
+              timeSpentFieldId: ctx.timeSpentFieldId,
+            });
+            if (syncedIssueKeys.has(view.key)) {
+              counts.duplicateSkips += 1;
+              actions.push({
+                kind: 'duplicate-skip',
+                title: local.title,
+                issueKey: view.key,
+                detail:
+                  'bind-by-title skipped; another checklist line already syncs this Jira key',
+              });
+              continue;
+            }
+            local.issueKey = view.key;
+            local.jiraIssueKey = view.key;
+            local.dirty = true;
+            markRootDirty(local);
+            if (!localByKey.has(view.key)) {
+              localByKey.set(view.key, local);
+            }
+            syncedIssueKeys.add(view.key);
+            remoteMap.set(view.key, view);
+            writeLedgerFromRemote(workingLedger, key, view, now);
+            counts.createdRemote += 1;
+            actions.push({
+              kind: 'create-remote',
+              title: local.title,
+              issueKey: view.key,
+              detail: 'bound existing Jira issue by title; wrote [jira::] field',
+            });
+            continue;
+          }
+        } catch (error) {
+          errors.push(`Bind by summary "${local.title}": ${errorMessage(error)}`);
+        }
       }
 
       const startErr = startDateConfigError(local, ctx.dateFields.startDateFieldId ?? '');
@@ -441,9 +524,15 @@ export async function syncOneMapping(
         }
 
         local.issueKey = created.key;
+        if (external) {
+          local.jiraIssueKey = created.key;
+        }
         local.dirty = true;
         markRootDirty(local);
-        localByKey.set(created.key, local);
+        if (!localByKey.has(created.key)) {
+          localByKey.set(created.key, local);
+        }
+        syncedIssueKeys.add(created.key);
 
         if (!dryRun) {
           await runLabelReconcile(
@@ -483,7 +572,9 @@ export async function syncOneMapping(
           kind: 'create-remote',
           title: local.title,
           issueKey: created.key,
-          detail: 'unlinked checklist item in the note',
+          detail: external
+            ? 'created Jira issue for external title link; wrote [jira::] field'
+            : 'unlinked checklist item in the note',
         });
       } catch (error) {
         errors.push(`Create remote "${local.title}": ${errorMessage(error)}`);
@@ -492,6 +583,21 @@ export async function syncOneMapping(
     }
 
     const issueKey = local.issueKey.toUpperCase();
+    if (syncedIssueKeys.has(issueKey)) {
+      // Same Jira key appears on multiple checklist lines (different external
+      // URLs / descriptions). Syncing each would thrash push/pull forever.
+      counts.duplicateSkips += 1;
+      actions.push({
+        kind: 'duplicate-skip',
+        title: local.title,
+        issueKey,
+        detail:
+          'another checklist line already syncs this Jira key; left this row unchanged',
+      });
+      continue;
+    }
+    syncedIssueKeys.add(issueKey);
+
     const remote = remoteMap.get(issueKey);
     const entry = workingLedger.entries[ledgerEntryKey(key, issueKey)];
 
@@ -514,41 +620,51 @@ export async function syncOneMapping(
 
     const localSnap = localSnapshot(local, parentIssueKey, entry);
     const remoteSnap = remoteSnapshot(remote);
-    const localHash = contentHash(localSnap);
-    const remoteHash = contentHash(remoteSnap);
+
+    // Both sides already agree on syncable fields (title/status/dates/…).
+    // Never report a conflict just because the ledger is missing/stale or the
+    // local snapshot has empty jiraStatus* before the first ledger write.
+    // Label/assignee updates bump issue.updated without changing content —
+    // those must not look like remote edits either.
+    if (contentCoreEqual(localSnap, remoteSnap)) {
+      writeLedgerFromRemote(workingLedger, key, remote, now);
+      if (entry) {
+        entry.unresolved = false;
+      }
+      counts.unchanged += 1;
+      actions.push({ kind: 'unchanged', title: local.title, issueKey });
+      await writeDerivedStartIfNeeded(
+        options.client,
+        remote,
+        ctx,
+        dryRun,
+        actions,
+      );
+      await runLabelReconcile(
+        options.client,
+        remote,
+        ctx,
+        dryRun,
+        counts,
+        actions,
+      );
+      await runAssigneeReconcile(
+        options.client,
+        local,
+        remote,
+        ctx,
+        dryRun,
+        counts,
+        actions,
+        errors,
+      );
+      runTimeSpentReconcile(local, remote, counts, actions);
+      continue;
+    }
 
     if (!entry) {
-      if (localHash === remoteHash) {
-        writeLedgerFromRemote(workingLedger, key, remote, now);
-        counts.unchanged += 1;
-        actions.push({ kind: 'unchanged', title: local.title, issueKey });
-        await writeDerivedStartIfNeeded(
-          options.client,
-          remote,
-          ctx,
-          dryRun,
-          actions,
-        );
-        await runLabelReconcile(
-          options.client,
-          remote,
-          ctx,
-          dryRun,
-          counts,
-          actions,
-        );
-        await runAssigneeReconcile(
-          options.client,
-          local,
-          remote,
-          ctx,
-          dryRun,
-          counts,
-          actions,
-          errors,
-        );
-        runTimeSpentReconcile(local, remote, counts, actions);
-      } else if (options.conflictPolicy === 'prefer-obsidian') {
+      // First time we see this link and the sides disagree — adopt via policy.
+      if (options.conflictPolicy === 'prefer-obsidian') {
         await pushLocal(
           options,
           ctx,
@@ -574,6 +690,7 @@ export async function syncOneMapping(
           counts,
           actions,
           true,
+          options.baseUrl,
         );
         await writeDerivedStartIfNeeded(
           options.client,
@@ -605,12 +722,17 @@ export async function syncOneMapping(
       continue;
     }
 
-    const localChanged = localHash !== entry.contentHash;
-    const remoteChanged =
-      remoteHash !== entry.contentHash || remote.updated !== entry.jiraUpdated;
+    // Core fields vs ledger (day-level dates, trimmed titles). Full contentHash
+    // still includes jiraStatus* for ledger storage, but column-id drift
+    // alone must not look like an Obsidian edit.
+    const entrySnap = snapshotFromLedger(entry);
+    const localChanged = !contentCoreEqual(localSnap, entrySnap);
+    const remoteChanged = !contentCoreEqual(remoteSnap, entrySnap);
 
     if (!localChanged && !remoteChanged) {
       entry.unresolved = false;
+      // Keep exact Jira column identity + updatedAt fresh in the ledger.
+      writeLedgerFromRemote(workingLedger, key, remote, now);
       counts.unchanged += 1;
       actions.push({ kind: 'unchanged', title: local.title, issueKey });
       await writeDerivedStartIfNeeded(
@@ -671,6 +793,7 @@ export async function syncOneMapping(
         counts,
         actions,
         false,
+        options.baseUrl,
       );
       await writeDerivedStartIfNeeded(
         options.client,
@@ -701,6 +824,7 @@ export async function syncOneMapping(
       continue;
     }
 
+    // True conflict: both sides disagree with the ledger AND with each other.
     if (options.conflictPolicy === 'prefer-obsidian') {
       await pushLocal(
         options,
@@ -727,6 +851,7 @@ export async function syncOneMapping(
         counts,
         actions,
         true,
+        options.baseUrl,
       );
       await writeDerivedStartIfNeeded(
         options.client,
@@ -1042,6 +1167,7 @@ function pullRemote(
   counts: MappingSyncCounts,
   actions: SyncActionDetail[],
   isConflict: boolean,
+  baseUrl: string,
 ): void {
   local.title = remote.title;
   local.descriptionLines = descriptionToLines(remote.description);
@@ -1050,6 +1176,13 @@ function pullRemote(
   local.startDate = remote.startDate;
   local.dueDate = remote.dueDate;
   local.issueKey = remote.key;
+  if (isExternalTitleLink(local, baseUrl)) {
+    local.jiraIssueKey = remote.key;
+    // Keep external titleLinkUrl; only the display text (title) changes above.
+  } else {
+    local.titleLinkUrl = null;
+    local.jiraIssueKey = null;
+  }
   local.dirty = true;
   markRootDirty(local);
   writeLedgerFromRemote(ledger, key, remote, now);
@@ -1539,6 +1672,9 @@ function fromParsed(node: ParsedTaskNode, parent: MutableTask | null): MutableTa
     title: node.title,
     descriptionLines: [...node.descriptionLines],
     issueKey: node.issueKey ? node.issueKey.toUpperCase() : null,
+    titleLinkUrl: node.titleLinkUrl,
+    jiraIssueKey: node.jiraIssueKey ? node.jiraIssueKey.toUpperCase() : null,
+    unknownInlineFields: [...node.unknownInlineFields],
     startDate: node.startDate,
     dueDate: node.dueDate,
     assignee: node.assignee,
@@ -1563,6 +1699,9 @@ function createLocalNode(remote: RemoteIssueView): MutableTask {
     title: remote.title,
     descriptionLines: descriptionToLines(remote.description),
     issueKey: remote.key,
+    titleLinkUrl: null,
+    jiraIssueKey: null,
+    unknownInlineFields: [],
     startDate: remote.startDate,
     dueDate: remote.dueDate,
     assignee: null,
@@ -1572,6 +1711,15 @@ function createLocalNode(remote: RemoteIssueView): MutableTask {
     isNew: true,
     dirty: true,
   };
+}
+
+/** True when the title is a markdown link that does not point at this Jira instance. */
+function isExternalTitleLink(task: MutableTask, baseUrl: string): boolean {
+  const url = task.titleLinkUrl?.trim() ?? '';
+  if (!url) {
+    return false;
+  }
+  return extractIssueKeyFromUrl(url, baseUrl) === null;
 }
 
 function walkMutable(roots: MutableTask[], visit: (task: MutableTask) => void): void {
@@ -1601,6 +1749,9 @@ function toRenderable(task: MutableTask): RenderableTask {
     checkboxChar: task.checkboxChar,
     title: task.title,
     issueKey: task.issueKey,
+    titleLinkUrl: task.titleLinkUrl,
+    jiraIssueKey: task.jiraIssueKey,
+    unknownInlineFields: task.unknownInlineFields,
     startDate: task.startDate,
     dueDate: task.dueDate,
     assignee: task.assignee,
@@ -1683,6 +1834,7 @@ function emptyCounts(): MappingSyncCounts {
     unchanged: 0,
     unresolvedRemovals: 0,
     recoveredPendingLinks: 0,
+    duplicateSkips: 0,
     labelReconciliations: 0,
     assigneeReconciliations: 0,
     timeSpentReconciliations: 0,
@@ -1699,6 +1851,7 @@ function addCounts(a: MappingSyncCounts, b: MappingSyncCounts): MappingSyncCount
     unchanged: a.unchanged + b.unchanged,
     unresolvedRemovals: a.unresolvedRemovals + b.unresolvedRemovals,
     recoveredPendingLinks: a.recoveredPendingLinks + b.recoveredPendingLinks,
+    duplicateSkips: a.duplicateSkips + b.duplicateSkips,
     labelReconciliations: a.labelReconciliations + b.labelReconciliations,
     assigneeReconciliations: a.assigneeReconciliations + b.assigneeReconciliations,
     timeSpentReconciliations: a.timeSpentReconciliations + b.timeSpentReconciliations,
@@ -1729,6 +1882,7 @@ function summarizeRun(
     countKind(actions, 'unresolved-missing-remote') +
     countKind(actions, 'unresolved-missing-local');
   const recovered = countKind(actions, 'recovered-pending');
+  const duplicates = countKind(actions, 'duplicate-skip');
   const labelFixes = countKind(actions, 'reconcile-labels');
   const assigneeFixes = countKind(actions, 'reconcile-assignee');
   const timeSpentFixes = countKind(actions, 'reconcile-timespent');
@@ -1761,6 +1915,11 @@ function summarizeRun(
   }
   if (recovered > 0) {
     parts.push(dryRun ? `${recovered} would relink` : `${recovered} relinked`);
+  }
+  if (duplicates > 0) {
+    parts.push(
+      `${duplicates} duplicate link${duplicates === 1 ? '' : 's'} skipped`,
+    );
   }
   if (labelFixes > 0) {
     parts.push(

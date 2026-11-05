@@ -719,4 +719,59 @@ describe('JiraClient', () => {
 
     await expect(client.listBoardLabels(5)).resolves.toEqual(['performance', 'security']);
   });
+
+  it('findIssueByExactSummary uses phrase JQL and returns exact match', async () => {
+    const baseUrl = 'https://example.atlassian.net';
+    const transport = mockTransport((request) => {
+      if (
+        request.method === 'GET' &&
+        request.url.startsWith(`${baseUrl}/rest/api/3/search/jql?`)
+      ) {
+        const jql = new URL(request.url).searchParams.get('jql') ?? '';
+        expect(jql).toContain('project = "PROJ"');
+        expect(jql).toContain('summary ~');
+        expect(jql).toContain('Exact title');
+        return {
+          status: 200,
+          headers: {},
+          text: JSON.stringify({
+            isLast: true,
+            issues: [
+              {
+                id: '1',
+                key: 'PROJ-77',
+                fields: {
+                  summary: 'Exact title',
+                  status: { id: '1', name: 'To Do' },
+                  project: { key: 'PROJ' },
+                },
+              },
+              {
+                id: '2',
+                key: 'PROJ-78',
+                fields: {
+                  summary: 'Exact title extra',
+                  status: { id: '1', name: 'To Do' },
+                  project: { key: 'PROJ' },
+                },
+              },
+            ],
+          }),
+        };
+      }
+      return { status: 404, headers: {}, text: '' };
+    });
+
+    const client = new JiraClient({
+      baseUrl,
+      authMode: 'cloud',
+      email: 'user@example.com',
+      token: 'token',
+      transport,
+      useAdfDescription: true,
+    });
+
+    const issue = await client.findIssueByExactSummary('PROJ', 'Exact title');
+    expect(issue?.key).toBe('PROJ-77');
+  });
 });

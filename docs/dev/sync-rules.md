@@ -204,9 +204,11 @@ Action: rewrite the Obsidian block from Jira; reconcile labels; update ledger.
 
 ### Conflict
 
-Condition: both local and remote differ from the ledger.
+Condition: local and remote differ from each other **and** both differ from the ledger.
 
-Action:
+If Obsidian and Jira already agree on title, description, coarse status, parent, and dates, that is **not** a conflict — repair the ledger and count as unchanged (even when the ledger was missing or stale, or when only `updated` / column status ids drifted).
+
+Action when it is a real conflict:
 
 - If `conflictPolicy === prefer-obsidian`: same as Push.
 - If `conflictPolicy === prefer-jira`: same as Pull.
@@ -215,9 +217,9 @@ Default policy: `prefer-obsidian`.
 
 ### Unchanged
 
-Condition: local and remote both match the ledger for content.
+Condition: local and remote agree on syncable content (or both match the ledger).
 
-Action: no content mutation; still run column→label reconciliation when labels disagree with the column.
+Action: no content mutation; refresh the ledger from Jira when needed; still run column→label reconciliation when labels disagree with the column. Label/assignee-only API writes that bump `updated` must not count as a remote content change.
 
 ### Unresolved removal
 

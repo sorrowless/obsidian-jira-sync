@@ -78,6 +78,7 @@ interface MockClientBundle {
   listTransitions: ReturnType<typeof vi.fn>;
   transitionIssue: ReturnType<typeof vi.fn>;
   getIssue: ReturnType<typeof vi.fn>;
+  findIssueByExactSummary: ReturnType<typeof vi.fn>;
 }
 
 function createMockClient(initial: JiraIssue[] = []): MockClientBundle {
@@ -230,6 +231,21 @@ function createMockClient(initial: JiraIssue[] = []): MockClientBundle {
     }
   });
 
+  const findIssueByExactSummary = vi.fn(async (projectKey: string, summary: string) => {
+    const title = summary.trim();
+    const project = projectKey.trim().toUpperCase();
+    for (const row of issues.values()) {
+      const rowProject = String(row.fields.project?.key ?? '').toUpperCase();
+      if (rowProject && rowProject !== project) {
+        continue;
+      }
+      if (String(row.fields.summary ?? '').trim() === title) {
+        return structuredClone(row);
+      }
+    }
+    return null;
+  });
+
   const client = {
     getBoard,
     getBoardConfiguration,
@@ -242,6 +258,7 @@ function createMockClient(initial: JiraIssue[] = []): MockClientBundle {
     listTransitions,
     transitionIssue,
     getIssue,
+    findIssueByExactSummary,
   } as unknown as JiraClient;
 
   return {
@@ -257,6 +274,7 @@ function createMockClient(initial: JiraIssue[] = []): MockClientBundle {
     listTransitions,
     transitionIssue,
     getIssue,
+    findIssueByExactSummary,
   };
 }
 
@@ -680,5 +698,69 @@ describe('sync engine', () => {
       (call) => call[1]?.customFields?.customfield_actual !== undefined,
     );
     expect(actualWrites).toHaveLength(0);
+  });
+
+  it('creates Jira issue for external title link and writes jira field', async () => {
+    const mock = createMockClient();
+    const { written } = await runSync({
+      note: '- [ ] [Tracker title](https://tracker.example/CL-1)',
+      mock,
+    });
+    expect(mock.createIssue).toHaveBeenCalledTimes(1);
+    expect(mock.createIssue.mock.calls[0]?.[0]?.summary).toBe('Tracker title');
+    expect(written).toContain('[Tracker title](https://tracker.example/CL-1)');
+    expect(written).toContain('[jira:: [PROJ-100](https://jira.example/browse/PROJ-100)]');
+    expect(written).not.toMatch(/\[Tracker title\]\(https:\/\/jira\.example\//);
+  });
+
+  it('binds external title link to existing Jira issue by summary', async () => {
+    const mock = createMockClient([issueRow('PROJ-77', 'Shared name')]);
+    const { written } = await runSync({
+      note: '- [ ] [Shared name](https://tracker.example/CL-9)',
+      mock,
+    });
+    expect(mock.createIssue).not.toHaveBeenCalled();
+    expect(mock.findIssueByExactSummary).toHaveBeenCalledWith(
+      'PROJ',
+      'Shared name',
+      expect.any(Array),
+    );
+    expect(written).toContain('[Shared name](https://tracker.example/CL-9)');
+    expect(written).toContain('[jira:: [PROJ-77](https://jira.example/browse/PROJ-77)]');
+  });
+
+  it('skips duplicate Jira keys instead of pushing the second checklist line', async () => {
+    const mock = createMockClient([
+      issueRow('PROJ-90', 'Shared title', {
+        description: 'canonical description from Jira',
+        status: {
+          id: '4',
+          name: 'Done',
+          statusCategory: { key: 'done' },
+        },
+      }),
+    ]);
+    const note = [
+      '- [x] [Shared title](https://tracker.example/AAA-1) [jira:: [PROJ-90](https://jira.example/browse/PROJ-90)]',
+      '    - canonical description from Jira',
+      '- [x] [Shared title](https://tracker.example/BBB-2) [jira:: [PROJ-90](https://jira.example/browse/PROJ-90)]',
+      '    - different local description that must not push',
+    ].join('\n');
+
+    const { result } = await runSync({ note, mock });
+
+    expect(result.mappings[0]?.counts.pushed).toBe(0);
+    expect(result.mappings[0]?.counts.conflictsResolved).toBe(0);
+    expect(result.mappings[0]?.counts.duplicateSkips).toBe(1);
+    expect(result.mappings[0]?.counts.unchanged).toBe(1);
+    expect(
+      result.mappings[0]?.actions.some(
+        (action) => action.kind === 'duplicate-skip' && action.issueKey === 'PROJ-90',
+      ),
+    ).toBe(true);
+    expect(
+      mock.updateIssue.mock.calls.some((call) => call[1]?.description !== undefined),
+    ).toBe(false);
+    expect(result.message).toMatch(/duplicate link/);
   });
 });

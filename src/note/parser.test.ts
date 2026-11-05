@@ -36,13 +36,26 @@ describe('parseNoteTasks', () => {
     expect(roots[1]?.status).toBe('in_progress');
   });
 
-  it('ignores foreign browse links', () => {
+  it('ignores foreign browse links as classic identity', () => {
     const roots = parseNoteTasks(
       '- [ ] [X](https://other.example/browse/PROJ-1)',
       { jiraBaseUrl: BASE },
     );
     expect(roots[0]?.issueKey).toBeNull();
+    expect(roots[0]?.titleLinkUrl).toBe('https://other.example/browse/PROJ-1');
     expect(roots[0]?.title).toBe('X');
+  });
+
+  it('parses dual-link jira field with external title URL', () => {
+    const roots = parseNoteTasks(
+      '- [ ] [Shared](https://tracker.example/CL-1) [jira:: PROJ-9] [ytracker:: CL-1]',
+      { jiraBaseUrl: BASE },
+    );
+    expect(roots[0]?.title).toBe('Shared');
+    expect(roots[0]?.titleLinkUrl).toBe('https://tracker.example/CL-1');
+    expect(roots[0]?.issueKey).toBe('PROJ-9');
+    expect(roots[0]?.jiraIssueKey).toBe('PROJ-9');
+    expect(roots[0]?.unknownInlineFields).toEqual(['[ytracker:: CL-1]']);
   });
 
   it('parses Dataview assignee fields', () => {

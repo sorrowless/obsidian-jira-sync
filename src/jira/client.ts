@@ -8,7 +8,7 @@ import {
   describeIssueSyncFilter,
   type IssueSyncFilter,
 } from './issue-filter';
-import { boardProjectJql } from './jql';
+import { boardProjectJql, escapeJqlString } from './jql';
 import {
   buildBlocksLinkBody,
   findBlocksLinkIdBetween,
@@ -370,6 +370,30 @@ export class JiraClient {
     }
 
     return [...byKey.values()];
+  }
+
+  /**
+   * Find one issue in a project whose summary equals `summary` exactly.
+   * Uses JQL phrase search, then filters client-side for an exact match.
+   */
+  async findIssueByExactSummary(
+    projectKey: string,
+    summary: string,
+    fields: string[] = ['summary', 'status', 'labels', 'updated'],
+  ): Promise<JiraIssue | null> {
+    const project = projectKey.trim();
+    const title = summary.trim();
+    if (!project || !title) {
+      return null;
+    }
+    const jql =
+      `project = "${escapeJqlString(project)}" AND ` +
+      `summary ~ "\\"${escapeJqlString(title)}\\"" ORDER BY updated DESC`;
+    const issues = await this.searchIssues(jql, fields, 50);
+    const exact = issues.find(
+      (issue) => String(issue.fields?.summary ?? '').trim() === title,
+    );
+    return exact ?? null;
   }
 
   /**

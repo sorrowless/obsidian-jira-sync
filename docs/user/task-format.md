@@ -18,6 +18,27 @@ After the first sync that creates the issue in Jira, the line becomes a link:
 
 The link text is the title. The URL points at the Jira issue browse page.
 
+## Dual-link titles (external URL + Jira)
+
+When the checklist title is already a markdown link to a **non-Jira** site (for example Yandex Tracker), sync does **not** replace that URL. Instead it binds (or creates) a Jira issue and stores the Jira identity in a Dataview field:
+
+```markdown
+- [/] [Shared work item](https://tracker.example/CL-406) [jira:: [PROJ-42](https://jira.example/browse/PROJ-42)]
+```
+
+| Situation | Behavior |
+| --- | --- |
+| Title link is already this Jira instance | Classic path — key lives in the title URL; no `jira` field |
+| Title link is external + `[jira:: …]` present | Bind by the key/URL inside `jira` |
+| Title link is external, no `jira` | Search the board project for an issue whose summary equals the link text; create if missing; write `[jira:: KEY]` |
+| Jira renames the issue | Only the **display text** of the external title link is updated; the external URL and the `jira` field stay as-is |
+| Jira status/column changes | Checkbox updates as usual via the key from `jira` |
+| Unknown Dataview fields (`[ytracker:: …]`, etc.) | Ignored for sync and preserved on rewrite |
+
+The `jira` value is the issue key (optionally as a browse link) — project key and number are stable.
+
+**One Jira key per checklist line.** If several rows reuse the same `[jira:: PROJ-N]` (for example two Tracker tickets pointed at one Jira issue), only the **first** row in the note is synced. Later duplicates are reported as skipped and left untouched — otherwise their different descriptions would thrash push/pull on every run.
+
 ## Start and due dates
 
 Start and due dates live **after** the title link (not inside the `[...]` brackets):
